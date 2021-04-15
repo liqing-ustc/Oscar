@@ -1,5 +1,5 @@
 python oscar/run_captioning.py \
-    --model_name_or_path models/pretrained_models/image_captioning/pretrained_base \
+    --model_name_or_path models/pretrained_base/image_captioning/pretrained_base \
     --do_train \
     --train_yaml val.yaml --per_gpu_train_batch_size 3 \
     --do_lower_case \
