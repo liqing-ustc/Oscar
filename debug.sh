@@ -1,11 +1,11 @@
 python oscar/run_captioning.py \
     --model_name_or_path models/pretrained_base/checkpoint-2000000 \
     --do_train \
-    --train_yaml val.yaml --per_gpu_train_batch_size 3 \
+    --train_yaml val.yaml \
     --do_lower_case \
     --add_od_labels \
     --learning_rate 3e-5 \
-    --per_gpu_train_batch_size 64 \
+    --per_gpu_train_batch_size 4 \
     --num_train_epochs 60 \
     --tie_weights \
     --freeze_embedding \
