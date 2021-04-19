@@ -629,7 +629,23 @@ class BertForImageCaptioning(CaptionPreTrainedModel):
         if is_decode:
             return self.generate(*args, **kwargs)
         else:
-            return self.encode_forward(*args, **kwargs)
+            attention_mask_text_only = kwargs.pop('attention_mask_text_only', None)
+            outputs = self.encode_forward(*args, **kwargs)
+            if kwargs.get('is_training', True):
+                masked_ids = kwargs['masked_ids']
+                class_logits = outputs[0]
+                masked_ids = masked_ids[masked_ids != 0]   # remove padding masks
+
+                if self.config.text_only_regularizer > 0:
+                    kwargs['attention_mask'] = attention_mask_text_only
+                    class_logits_text_only = self.encode_forward(*args, **kwargs)[0].detach() * self.config.text_only_regularizer
+                    class_logits = F.softmax(class_logits, dim=1) * F.softmax(class_logits_text_only, dim=1)
+                    class_logits = class_logits / class_logits.sum(dim=1, keepdim=True)
+                    class_logits = torch.log(class_logits)
+
+                masked_loss = self.loss(class_logits.float(), masked_ids)
+                outputs = (masked_loss,) + outputs
+            return outputs
 
     def encode_forward(self, input_ids, img_feats, attention_mask, masked_pos, masked_ids=None, 
             token_type_ids=None, position_ids=None, head_mask=None,
@@ -643,15 +659,11 @@ class BertForImageCaptioning(CaptionPreTrainedModel):
         if is_training:
             sequence_output = outputs[0][:, :masked_pos.shape[-1], :]
             # num_masks_in_batch * hidden_size
-            sequence_output_masked = sequence_output[masked_pos==1, :]
-            class_logits = self.cls(sequence_output_masked)
-            masked_ids = masked_ids[masked_ids != 0]   # remove padding masks
-            masked_loss = self.loss(class_logits.float(), masked_ids)
-            outputs = (masked_loss, class_logits,) + outputs[2:]
+            sequence_output = sequence_output[masked_pos==1, :]
         else:
             sequence_output = outputs[0][:, :input_ids.shape[-1], :]
-            class_logits = self.cls(sequence_output)
-            outputs = (class_logits,) + outputs[2:]
+        class_logits = self.cls(sequence_output)
+        outputs = (class_logits,) + outputs[2:]
         return outputs
 
 

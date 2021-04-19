@@ -305,6 +305,7 @@ class CaptionTensorizer(object):
         r_start, r_end = self.max_seq_len, self.max_seq_len + img_len
         # triangle mask for caption to caption
         attention_mask[c_start : c_end, c_start : c_end].copy_(self._triangle_mask[0 : seq_a_len, 0 : seq_a_len])
+        attention_mask_text_only = torch.clone(attention_mask)
         # full attention for L-L, R-R
         attention_mask[l_start : l_end, l_start : l_end] = 1
         attention_mask[r_start : r_end, r_start : r_end] = 1
@@ -320,7 +321,7 @@ class CaptionTensorizer(object):
 
         if self.is_train:
             masked_ids = torch.tensor(masked_ids, dtype=torch.long)
-            return (input_ids, attention_mask, segment_ids, img_feat, masked_pos, masked_ids)
+            return (input_ids, attention_mask, segment_ids, img_feat, masked_pos, masked_ids, attention_mask_text_only)
         return (input_ids, attention_mask, segment_ids, img_feat, masked_pos)
 
 
@@ -469,7 +470,8 @@ def train(args, train_dataloader, val_dataset, model, tokenizer):
                 model.train()
                 inputs = {'input_ids': batch[0], 'attention_mask': batch[1],
                     'token_type_ids': batch[2], 'img_feats': batch[3], 
-                    'masked_pos': batch[4], 'masked_ids': batch[5]
+                    'masked_pos': batch[4], 'masked_ids': batch[5],
+                    'attention_mask_text_only': batch[6]
                 }
                 outputs = model(**inputs)
                 loss, logits = outputs[:2]
@@ -921,6 +923,10 @@ def main():
                         help='Use constrained beam search for decoding')
     parser.add_argument('--min_constraints_to_satisfy', type=int, default=2,
                         help="minimum number of constraints to satisfy")
+
+    parser.add_argument('--text_only_regularizer', type=float, default=0.,
+                        help='the text only probability to regularize logit. 0 for no regularizing')
+
     args = parser.parse_args()
 
     global logger
@@ -961,6 +967,7 @@ def main():
         config.label_smoothing = args.label_smoothing
         config.drop_worst_ratio = args.drop_worst_ratio
         config.drop_worst_after = args.drop_worst_after
+        config.text_only_regularizer = args.text_only_regularizer
         model = model_class.from_pretrained(args.model_name_or_path,
                 from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
     else:
