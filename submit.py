@@ -1,3 +1,4 @@
+#! /home/qing/.virtualenvs/azure/bin/python
 import os
 import pdb
 from datetime import date
@@ -15,6 +16,8 @@ submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num
 job_cmd = "oscar/run_captioning.py \
     --model_name_or_path models/pretrained_base/checkpoint-2000000 \
     --do_train \
+    --do_test \
+    --evaluate_during_training --save_steps 5000 \
     --do_lower_case \
     --add_od_labels \
     --learning_rate 3e-5 \
