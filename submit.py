@@ -1,13 +1,13 @@
 #! /home/qing/.virtualenvs/azure/bin/python
 import os
 import pdb
-from datetime import date
+from datetime import datetime
 
 ws_config = 'itp_acv' 
 stamp = ''
 
 if not stamp:
-    stamp = date.today().strftime('%Y%m%d')
+    stamp = datetime.now().strftime('%Y%m%d.%H%M%S')
 
 
 output_dir = 't-lqing/output/oscar.{}'
