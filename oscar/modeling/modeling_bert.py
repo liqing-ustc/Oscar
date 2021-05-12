@@ -908,7 +908,7 @@ class BertForImageCaptioning(CaptionPreTrainedModel):
         return x
 
     def _do_output_past(self, outputs):
-        return len(outputs) > 1
+        return len(outputs) > 1 and not self.config.output_attentions
 
 
 class BertPreTrainingHeads(nn.Module):

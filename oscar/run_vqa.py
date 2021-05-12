@@ -26,6 +26,7 @@ from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, Warmu
 from oscar.utils.misc import set_seed
 from oscar.utils.task_utils import (_truncate_seq_pair, convert_examples_to_features_vqa,
                         output_modes, processors)
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -427,9 +428,9 @@ def instance_bce_with_logits(logits, labels, reduction='mean'):
 
 def compute_score_with_logits(logits, labels):
     logits = torch.max(logits, 1)[1].data # argmax
-    one_hots = torch.zeros(*labels.size()).cuda()
-    one_hots.scatter_(1, logits.view(-1, 1), 1)
-    scores = (one_hots * labels)
+    one_hots = torch.zeros(*labels.size())
+    one_hots.scatter_(1, logits.view(-1, 1).cpu(), 1)
+    scores = (one_hots * labels.cpu())
     return scores
 
 
@@ -734,7 +735,7 @@ def evaluate(args, model, eval_dataset=None, prefix=""):
                      zip(batch[6].view(-1).tolist(), batch_score.tolist())}
                 )
                 score += batch_score.sum().item()
-                #upper_bound += (batch[4].max(1)[0]).sum().item()
+                upper_bound += (batch[4].max(1)[0]).sum().item()
                 num_data += logits.size(0)
 
                 # debug
@@ -923,27 +924,27 @@ def main():
     parser = argparse.ArgumentParser()
 
     ## Required parameters
-    parser.add_argument("--data_dir", default=None, type=str, required=True,
+    parser.add_argument("--data_dir", default="datasets/vqa", type=str,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
-    parser.add_argument("--txt_data_dir", default=None, type=str, required=True,
+    parser.add_argument("--txt_data_dir", default="datasets/vqa", type=str,
                         help="The input text data dir. Should contain the .json files (or other data files) for the task.")
 
-    parser.add_argument("--model_type", default=None, type=str, required=True,
+    parser.add_argument("--model_type", default="bert", type=str,
                         help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
-    parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
+    parser.add_argument("--model_name_or_path", default="models/pretrained_base/checkpoint-2000000", type=str,
                         help="Path to pre-trained model or shortcut name")
-    parser.add_argument("--task_name", default=None, type=str, required=True,
+    parser.add_argument("--task_name", default="vqa_text", type=str,
                         help="The name of the task to train selected in the list: " + ", ".join(processors.keys()))
-    parser.add_argument("--output_dir", default=None, type=str, required=True,
+    parser.add_argument("--output_dir", default="output", type=str,
                         help="The output directory where the model predictions and checkpoints will be written.")
-    parser.add_argument("--label_file", type=str, default=None, help="Label Dictionary")
-    parser.add_argument("--label2ans_file", type=str, default=None, help="Label to Answer Dictionary")
+    parser.add_argument("--label_file", type=str, default="datasets/vqa/trainval_ans2label.pkl", help="Label Dictionary")
+    parser.add_argument("--label2ans_file", type=str, default="datasets/vqa/trainval_label2ans.pkl", help="Label to Answer Dictionary")
 
     parser.add_argument("--img_feat_dir", default=None, type=str, help="The input img_feat_dir.")
     parser.add_argument("--img_feat_format", default='pt', type=str, help="img_feat_format: pt or tsv.")
 
-    parser.add_argument("--data_label_type", default='faster', type=str, help="faster or mask")
-    parser.add_argument("--loss_type", default='kl', type=str, help="kl or xe")
+    parser.add_argument("--data_label_type", default='mask', type=str, help="faster or mask")
+    parser.add_argument("--loss_type", default='bce', type=str, help="kl or xe")
     parser.add_argument("--use_vg", action='store_true', help="Use VG-QA or not.")
     parser.add_argument("--use_vg_dev", action='store_true', help="Use VG-QA as validation.")
     #parser.add_argument("--use_img_layernorm", action='store_true', help="use_img_layernorm")
@@ -962,45 +963,45 @@ def main():
     parser.add_argument("--evaluate_during_training", action='store_true', help="Rul evaluation during training at each logging step.")
     parser.add_argument("--do_lower_case", action='store_true', help="Set this flag if you are using an uncased model.")
 
-    parser.add_argument("--drop_out", default=0.1, type=float, help="Drop out for BERT.")
+    parser.add_argument("--drop_out", default=0.3, type=float, help="Drop out for BERT.")
     parser.add_argument("--adjust_dp",action='store_true', help="Adjust Drop out for BERT.")
 
     parser.add_argument("--adjust_loss", action='store_true', help="Adjust Loss Type for BERT.")
     parser.add_argument("--adjust_loss_epoch", default=-1, type=int, help="Adjust Loss Type for BERT.")
     parser.add_argument("--classifier", default='linear', type=str, help="linear or mlp")
-    parser.add_argument("--cls_hidden_scale", default=2, type=int, help="cls_hidden_scale: for classifier")
+    parser.add_argument("--cls_hidden_scale", default=3, type=int, help="cls_hidden_scale: for classifier")
 
     parser.add_argument("--hard_label", action='store_true', help="Soft Label or Hard Label.")
 
-    parser.add_argument("--max_img_seq_length", default=30, type=int, help="The maximum total input image sequence length.")
+    parser.add_argument("--max_img_seq_length", default=50, type=int, help="The maximum total input image sequence length.")
     parser.add_argument("--img_feature_dim", default=2054, type=int, help="The Image Feature Dimension.")
     parser.add_argument("--img_feature_type", default='faster_r-cnn', type=str, help="faster_r-cnn or mask_r-cnn")
     parser.add_argument("--code_voc", default=512, type=int, help="dis_code_voc: 256, 512")
     parser.add_argument("--code_level", default='top', type=str, help="code level: top, botttom, both")
 
-    parser.add_argument("--per_gpu_train_batch_size", default=8, type=int, help="Batch size per GPU/CPU for training.")
-    parser.add_argument("--per_gpu_eval_batch_size", default=8, type=int, help="Batch size per GPU/CPU for evaluation.")
+    parser.add_argument("--per_gpu_train_batch_size", default=32, type=int, help="Batch size per GPU/CPU for training.")
+    parser.add_argument("--per_gpu_eval_batch_size", default=256, type=int, help="Batch size per GPU/CPU for evaluation.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
-    parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deay if we apply some.")
+    parser.add_argument("--weight_decay", default=0.05, type=float, help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--scheduler", default='linear', type=str, help="constant or linear.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
-    parser.add_argument("--num_train_epochs", default=3.0, type=float, help="Total number of training epochs to perform.")
+    parser.add_argument("--num_train_epochs", default=25, type=float, help="Total number of training epochs to perform.")
     parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument('--logging_steps', type=int, default=50, help="Log every X updates steps.")
+    parser.add_argument('--logging_steps', type=int, default=4000, help="Log every X updates steps.")
     parser.add_argument('--save_steps', type=int, default=-1, help="Save checkpoint every X updates steps.")
-    parser.add_argument('--save_epoch', type=int, default=5, help="Save checkpoint every X epochs.")
+    parser.add_argument('--save_epoch', type=int, default=1, help="Save checkpoint every X epochs.")
     parser.add_argument('--save_after_epoch', type=int, default=-1, help="Save checkpoint after epoch.")
     parser.add_argument("--eval_all_checkpoints", action='store_true',
                         help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number")
     parser.add_argument("--no_cuda", action='store_true', help="Avoid using CUDA when available")
     parser.add_argument('--overwrite_output_dir', action='store_true', help="Overwrite the content of the output directory")
     parser.add_argument('--overwrite_cache', action='store_true', help="Overwrite the cached training and evaluation sets")
-    parser.add_argument('--seed', type=int, default=42, help="random seed for initialization")
+    parser.add_argument('--seed', type=int, default=88, help="random seed for initialization")
 
     parser.add_argument('--fp16', action='store_true', help="Whether to use 16-bit (mixed) precision (through NVIDIA apex) instead of 32-bit")
     parser.add_argument('--fp16_opt_level', type=str, default='O1',
@@ -1012,7 +1013,7 @@ def main():
 
     parser.add_argument("--philly", action='store_true', help="Use Philly: reset the output dir")
     parser.add_argument("--load_fast", action='store_true', help="Load Tensor Fast")
-    parser.add_argument('-j', '--workers', default=0, type=int, metavar='N', help='number of data loading workers (default: 4)')
+    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
 
     #args = '--data_dir ../vqa/ban-vqa/data/qal_pairs --model_type bert --model_name_or_path bert-base-uncased --task_name vqa_text ' \
     #       '--do_train --do_eval --do_lower_case --max_seq_length 40 --per_gpu_eval_batch_size 16 --per_gpu_train_batch_size 16 --learning_rate 2e-5 ' \
