@@ -24,6 +24,6 @@ python oscar/run_captioning_pruning.py \
     --label_smoothing 0.1 \
     --drop_worst_ratio 0.2 \
     --drop_worst_after 20000 \
-    --output_dir output/ \
+    --output_dir output/aptioning_pruning \
     --self_slimming --inter_slimming \
     --prune_before_train --self_pruning_ratio=0.333 --inter_pruning_ratio=0.4
