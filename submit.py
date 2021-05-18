@@ -58,6 +58,7 @@ job_cmd = "oscar/run_captioning_pruning.py \
     --self_pruning_method=layerwise --inter_pruning_method=global --worst_pruning \
 "
 
+
 resolved_output_dir = output_dir.format(stamp)
 resolved_submit_cmd = submit_cmd.format(resolved_output_dir, ws_config, job_cmd)
 print(resolved_submit_cmd)
