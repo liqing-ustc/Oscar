@@ -901,7 +901,7 @@ def main():
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup.")
     parser.add_argument("--scheduler", default='linear', type=str, help="constant or linear or")
     parser.add_argument("--num_workers", default=4, type=int, help="Workers in dataloader.")
-    parser.add_argument("--num_train_epochs", default=40, type=int, 
+    parser.add_argument("--num_train_epochs", default=60, type=int, 
                         help="Total number of training epochs to perform.")
     parser.add_argument("--max_steps", default=-1, type=int, 
                         help="Total number of training steps. Override num_train_epochs.")
@@ -959,13 +959,19 @@ def main():
     parser.add_argument("--l1_loss_inter_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
 
     parser.add_argument("--prune_before_train", action='store_true', help="prune the model before training.")
+    parser.add_argument("--random_pruning", action='store_true', help="randomly prune.")
+    parser.add_argument("--worst_pruning", action='store_true', help="use the reversed coefficient to prune.")
     parser.add_argument("--slimming_coef_step", default=0, type=int, help="the training step used for pruning.")
     parser.add_argument("--inter_pruning_method", default="global", type=str, help="the method used to prune intermediate layers.")
     parser.add_argument("--self_pruning_method", default="layerwise", type=str, help="the method used to prune self attention heads.")
     parser.add_argument("--inter_pruning_ratio", default=0., type=float, help="pruning ratio for intermediate layers.")
     parser.add_argument("--self_pruning_ratio", default=0., type=float, help="pruning ratio for self attentions.")
+    parser.add_argument("--pruning_ratio", default=0., type=float, help="pruning ratio for both self attentions and intermediate layers.")
+    parser.add_argument("--flops", action='store_true', help="calculate the FLOPS of the model.")
     
     args = parser.parse_args()
+
+    saved_info = {'config': vars(args).copy()}
 
     global logger
 
@@ -1029,7 +1035,6 @@ def main():
                 args.distributed, is_train=False)
 
         if args.prune_before_train:
-            
             # evaluate the model before pruning
             logger.info("Evaluate the mode before pruning:")
             evaluate_file = evaluate(args, val_dataloader, model, tokenizer, args.model_name_or_path)
@@ -1042,8 +1047,12 @@ def main():
                     bert_layers.append(m)
 
             slimming_coefs = np.array([m.slimming_coef.detach().cpu().numpy().reshape(-1) for m in bert_layers])
+            if args.random_pruning:
+                slimming_coefs = np.random.rand(*slimming_coefs.shape)
+            elif args.worst_pruning:
+                slimming_coefs = -slimming_coefs
             quantile_axis = -1 if args.inter_pruning_method == 'layerwise' else None
-            threshold = np.quantile(slimming_coefs, args.inter_pruning_ratio, axis=quantile_axis, keepdims=True)
+            threshold = np.quantile(slimming_coefs, args.inter_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
             layers_masks = slimming_coefs > threshold
             # layers_masks = get_pruning_mask(slimming_coefs, training_args.inter_pruning_ratio, training_args.inter_pruning_method)
             for m, mask in zip(bert_layers, layers_masks):
@@ -1057,8 +1066,12 @@ def main():
                 if isinstance(m, BertAttention):
                     attention_modules.append(m)
             slimming_coefs = np.array([m.self.slimming_coef.detach().cpu().numpy().reshape(-1) for m in attention_modules])
+            if args.random_pruning:
+                slimming_coefs = np.random.rand(*slimming_coefs.shape)
+            elif args.worst_pruning:
+                slimming_coefs = -slimming_coefs
             quantile_axis = -1 if args.self_pruning_method == 'layerwise' else None
-            threshold = np.quantile(slimming_coefs, args.self_pruning_ratio, axis=quantile_axis, keepdims=True)
+            threshold = np.quantile(slimming_coefs, args.self_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
             layers_masks = slimming_coefs > threshold
             for m, mask in zip(attention_modules, layers_masks):
                 # pruned_heads = [i for i in range(len(attention_modules)) if mask[i] == 0]
@@ -1073,20 +1086,29 @@ def main():
                 pruned_num_params,
                 pruned_num_params / original_num_params * 100,
             )
+            saved_info['params'] = round(pruned_num_params / 1e6, 2)
+            saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
 
             # save and evaluate the pruned model
             logger.info("Evaluate the mode after pruning:")
             checkpoint_dir = save_checkpoint(model, tokenizer, args, 0, 0) 
             evaluate_file = evaluate(args, val_dataloader, model, tokenizer, checkpoint_dir)
 
+        tic = time.time()
         last_checkpoint = train(args, train_dataloader, val_dataloader, model, tokenizer)
+        saved_info['train_time'] = round((time.time() - tic) / 3600.0, 2)
 
         # test the last checkpoint after training
         if args.do_test:
             logger.info("Evaluate on dataset: " + args.test_yaml)
             test_dataloader = make_data_loader(args, args.test_yaml, 
                 tokenizer, args.distributed, is_train=False)
-            evaluate(args, test_dataloader, model, tokenizer, last_checkpoint)
+            evaluate_file = evaluate(args, test_dataloader, model, tokenizer, last_checkpoint)
+            res = json.load(open(evaluate_file))
+            saved_info['test_result'] = res
+        
+        if args.flops:
+            pass
 
     # inference and evaluation
     elif args.do_test or args.do_eval:
@@ -1102,6 +1124,8 @@ def main():
             evaluate_file = evaluate(args, test_dataloader, model, tokenizer,
                     checkpoint)
             logger.info("Evaluation results saved to: {}".format(evaluate_file))
+
+    json.dump(saved_info, open(op.join(args.output_dir, 'saved_info.json'), 'w'))
 
 if __name__ == "__main__":
     main()

@@ -49,23 +49,13 @@ submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num
 # "
 
 job_cmd = "oscar/run_captioning_pruning.py \
-    --model_name_or_path experiments/captioning/oscar.20210513.172521/checkpoint-18-20000 \
-    --do_train \
-    --do_test \
+    --model_name_or_path experiments/captioning/Oscar_B+pruning_coef_2/checkpoint-0-1000 \
+    --do_train --do_test --do_lower_case --add_od_labels --tie_weights --freeze_embedding \
+    --label_smoothing 0.1 --drop_worst_ratio 0.2 --drop_worst_after 20000 --output_dir output/ \
     --evaluate_during_training --save_steps 5000 \
-    --do_lower_case \
-    --add_od_labels \
-    --learning_rate 3e-5 \
-    --per_gpu_train_batch_size 64 \
-    --num_train_epochs 60 \
-    --tie_weights \
-    --freeze_embedding \
-    --label_smoothing 0.1 \
-    --drop_worst_ratio 0.2 \
-    --drop_worst_after 20000 \
-    --output_dir output/ \
-    --self_slimming --inter_slimming \
-    --prune_before_train --self_pruning_ratio=0.333 --inter_pruning_ratio=0.4 \
+    --self_slimming --inter_slimming --seed=2\
+    --prune_before_train --self_pruning_ratio=0.666 --inter_pruning_ratio=0.8 \
+    --self_pruning_method=layerwise --inter_pruning_method=global --worst_pruning \
 "
 
 resolved_output_dir = output_dir.format(stamp)

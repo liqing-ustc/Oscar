@@ -64,6 +64,7 @@ def compute_heads_importance(
     n_layers, n_heads = model.config.num_hidden_layers, model.config.num_attention_heads
     head_importance = torch.zeros(n_layers, n_heads).to(args.device)
     attn_entropy = torch.zeros(n_layers, n_heads).to(args.device)
+    attn_kl = torch.zeros(n_layers*n_heads, n_layers*n_heads).to(args.device)
 
     if head_mask is None:
         head_mask = torch.ones(n_layers, n_heads).to(args.device)
@@ -101,6 +102,15 @@ def compute_heads_importance(
             for layer, attn in enumerate(all_attentions):
                 masked_entropy = entropy(attn.detach()) * inputs["attention_mask"].float().unsqueeze(1)
                 attn_entropy[layer] += masked_entropy.sum(-1).sum(0).detach()
+        
+        if True:
+            m = torch.stack(all_attentions, axis=1).detach()
+            m = m.reshape((m.shape[0], -1, m.shape[3], m.shape[4]))
+            m = torch.einsum('biqk,bjqk->bqij', m, (m+1e-10).log())
+            m = m.diagonal(dim1=-2, dim2=-1).unsqueeze(-1) - m
+            m = torch.einsum('bqij,bq->ij', m, inputs['attention_mask'].float())
+            m = (m + m.T) / 2
+            attn_kl += m
 
         if compute_importance:
             head_mask.grad = None
@@ -121,6 +131,16 @@ def compute_heads_importance(
     # Normalize
     attn_entropy /= tot_tokens
     head_importance /= tot_tokens
+
+    if True:
+        attn_kl /= tot_tokens
+        np.save('output/attn_kl.npy', attn_kl.cpu().numpy())
+        import matplotlib.pyplot as plt
+        plt.imshow(attn_kl.cpu())
+        plt.colorbar()
+        plt.savefig("output/attn_kl.png", dpi=1000)
+        plt.show()
+
     # Layerwise importance normalization
     if not args.dont_normalize_importance_by_layer:
         exponent = 2
