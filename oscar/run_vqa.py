@@ -552,7 +552,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
         #global_step = epoch*math.ceil(len(train_dataset)/(args.train_batch_size * args.gradient_accumulation_steps * (torch.distributed.get_world_size() if args.local_rank != -1 else 1)))
 
         t_start = time.time()
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in enumerate(tqdm(train_dataloader)):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -1144,7 +1144,8 @@ def main():
     # Training
     if args.do_train:
         #train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
-        train_dataset = VQADataset(args, 'train', tokenizer)
+        # train_dataset = VQADataset(args, 'train', tokenizer)
+        train_dataset = VQADataset(args, 'val', tokenizer)
         global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
