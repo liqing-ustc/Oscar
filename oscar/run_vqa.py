@@ -1013,6 +1013,7 @@ def main():
     parser.add_argument("--philly", action='store_true', help="Use Philly: reset the output dir")
     parser.add_argument("--load_fast", action='store_true', help="Load Tensor Fast")
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
+    parser.add_argument("--debug", action='store_true', help="the debug mode to use val for train.")
 
     #args = '--data_dir ../vqa/ban-vqa/data/qal_pairs --model_type bert --model_name_or_path bert-base-uncased --task_name vqa_text ' \
     #       '--do_train --do_eval --do_lower_case --max_seq_length 40 --per_gpu_eval_batch_size 16 --per_gpu_train_batch_size 16 --learning_rate 2e-5 ' \
@@ -1143,7 +1144,7 @@ def main():
     # Training
     if args.do_train:
         #train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
-        train_dataset = VQADataset(args, 'train', tokenizer)
+        train_dataset = VQADataset(args, 'train', tokenizer) if not args.debug else eval_dataset
         global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
