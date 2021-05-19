@@ -704,7 +704,7 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
         time_meter = 0
 
         with torch.no_grad():
-            for step, (img_keys, batch) in tqdm(enumerate(test_dataloader)):
+            for step, (img_keys, batch) in enumerate(test_dataloader):
                 batch = tuple(t.to(args.device) for t in batch)
                 inputs = {
                     'input_ids': batch[0], 'attention_mask': batch[1],

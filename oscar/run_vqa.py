@@ -753,13 +753,11 @@ def evaluate(args, model, eval_dataset=None, prefix=""):
             #    preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
             #    out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
 
-        score = score / len(eval_dataloader.dataset)
-        upper_bound = upper_bound / len(eval_dataloader.dataset)
+        score = score / num_data
+        upper_bound = upper_bound / num_data
 
         logger.info("Eval Results:")
         logger.info("Eval Score: %.3f" % (100*score))
-        logger.info("Number of Samples: %d, %d" % (len(eval_dataloader.dataset), num_data))
-        logger.info("EVALERR: {}%".format(100*score))
         logger.info("Eval Upper Bound: %.3f" % (100*upper_bound))
         # with open(os.path.join(args.data_dir, 'val_results.json'),
         #           'w') as f:
@@ -1145,8 +1143,7 @@ def main():
     # Training
     if args.do_train:
         #train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
-        # train_dataset = VQADataset(args, 'train', tokenizer)
-        train_dataset = VQADataset(args, 'val', tokenizer)
+        train_dataset = VQADataset(args, 'train', tokenizer)
         global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 

@@ -34,7 +34,7 @@ submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num
 #     --self_slimming --inter_slimming --l1_loss_self_coef=1e-4 --l1_loss_inter_coef=1e-4 \
 # "
 
-job_cmd = "oscar/run_vqa.py \
+job_cmd = "python oscar/run_vqa.py \
     --data_label_type mask --img_feature_type faster_r-cnn \
     --task_name vqa_text --data_dir datasets/vqa --txt_data_dir datasets/vqa \
     --label_file datasets/vqa/trainval_ans2label.pkl \
