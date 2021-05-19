@@ -39,6 +39,7 @@ datasets1
 models
 output
 backup
+scene_graph_benchmark
 pretrained_model
 scripts
 t-lqing

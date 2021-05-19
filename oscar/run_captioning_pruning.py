@@ -829,6 +829,17 @@ def ensure_init_process_group(local_rank=None, port=12345):
         )
     return local_rank
 
+from thop import profile
+def calculate_flops(model):
+    batch_size, n_img_tokens, n_txt_tokens = 1, 50, 35
+    input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
+    img_feat = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
+    attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, n_img_tokens+n_txt_tokens, dtype=torch.int64)
+    masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)
+    model.to('cpu')
+    macs, params = profile(model.bert, (input_ids, None, attention_mask, None, None, img_feat))
+    flops = 2 * macs
+    pass
 
 def main():
     parser = argparse.ArgumentParser()
@@ -959,8 +970,6 @@ def main():
     parser.add_argument("--l1_loss_inter_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
 
     parser.add_argument("--prune_before_train", action='store_true', help="prune the model before training.")
-    parser.add_argument("--random_pruning", action='store_true', help="randomly prune.")
-    parser.add_argument("--worst_pruning", action='store_true', help="use the reversed coefficient to prune.")
     parser.add_argument("--slimming_coef_step", default=0, type=int, help="the training step used for pruning.")
     parser.add_argument("--inter_pruning_method", default="global", type=str, help="the method used to prune intermediate layers.")
     parser.add_argument("--self_pruning_method", default="layerwise", type=str, help="the method used to prune self attention heads.")
@@ -968,6 +977,7 @@ def main():
     parser.add_argument("--self_pruning_ratio", default=0., type=float, help="pruning ratio for self attentions.")
     parser.add_argument("--pruning_ratio", default=0., type=float, help="pruning ratio for both self attentions and intermediate layers.")
     parser.add_argument("--flops", action='store_true', help="calculate the FLOPS of the model.")
+    parser.add_argument("--pruning_strategy", default="small", type=str, help="The pruning strategy based on the coefficients: [large, random, small])")
     
     args = parser.parse_args()
 
@@ -1039,6 +1049,9 @@ def main():
             logger.info("Evaluate the mode before pruning:")
             evaluate_file = evaluate(args, val_dataloader, model, tokenizer, args.model_name_or_path)
 
+            if args.flops:
+                flops = calculate_flops(model)
+
             original_num_params = sum(p.numel() for p in model.parameters())
             # perform the intermediate layer pruning based on the slimming coef
             bert_layers = []
@@ -1047,9 +1060,9 @@ def main():
                     bert_layers.append(m)
 
             slimming_coefs = np.array([m.slimming_coef.detach().cpu().numpy().reshape(-1) for m in bert_layers])
-            if args.random_pruning:
+            if args.pruning_strategy == 'random':
                 slimming_coefs = np.random.rand(*slimming_coefs.shape)
-            elif args.worst_pruning:
+            elif args.pruning_strategy == 'large':
                 slimming_coefs = -slimming_coefs
             quantile_axis = -1 if args.inter_pruning_method == 'layerwise' else None
             threshold = np.quantile(slimming_coefs, args.inter_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
@@ -1066,9 +1079,9 @@ def main():
                 if isinstance(m, BertAttention):
                     attention_modules.append(m)
             slimming_coefs = np.array([m.self.slimming_coef.detach().cpu().numpy().reshape(-1) for m in attention_modules])
-            if args.random_pruning:
+            if args.pruning_strategy == 'random':
                 slimming_coefs = np.random.rand(*slimming_coefs.shape)
-            elif args.worst_pruning:
+            elif args.pruning_strategy == 'large':
                 slimming_coefs = -slimming_coefs
             quantile_axis = -1 if args.self_pruning_method == 'layerwise' else None
             threshold = np.quantile(slimming_coefs, args.self_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
@@ -1107,8 +1120,6 @@ def main():
             res = json.load(open(evaluate_file))
             saved_info['test_result'] = res
         
-        if args.flops:
-            pass
 
     # inference and evaluation
     elif args.do_test or args.do_eval:
