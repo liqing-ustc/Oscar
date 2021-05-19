@@ -552,7 +552,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
         #global_step = epoch*math.ceil(len(train_dataset)/(args.train_batch_size * args.gradient_accumulation_steps * (torch.distributed.get_world_size() if args.local_rank != -1 else 1)))
 
         t_start = time.time()
-        for step, batch in enumerate(tqdm(train_dataloader)):
+        for step, batch in enumerate(train_dataloader):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -758,6 +758,7 @@ def evaluate(args, model, eval_dataset=None, prefix=""):
 
         logger.info("Eval Results:")
         logger.info("Eval Score: %.3f" % (100*score))
+        logger.info("Number of Samples: %d, %d" % (len(eval_dataloader.dataset), num_data))
         logger.info("EVALERR: {}%".format(100*score))
         logger.info("Eval Upper Bound: %.3f" % (100*upper_bound))
         # with open(os.path.join(args.data_dir, 'val_results.json'),
