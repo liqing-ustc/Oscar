@@ -1,2 +1,2 @@
-export TARGET='https://xiyin1wu2.blob.core.windows.net/maskrcnn/t-lqing/vinvl/image_features/?sp=racw&st=2021-05-06T19:26:42Z&se=2021-05-07T03:26:42Z&sv=2020-02-10&sr=c&sig=1ryXaHPuiXbuXtk8bjUXmf%2B%2B1MGY%2FnmtSjUhqv14hy0%3D'
-azcopy cp 'https://biglmdiag.blob.core.windows.net/vinvl/image_features/coco_X152C4_frcnnbig2_exp168model_0060000model.roi_heads.nm_filter_2_model.roi_heads.score_thresh_0.2/model_0060000/' $TARGET  --recursive
+export TARGET='https://xiyin1wu2.blob.core.windows.net/maskrcnn/t-lqing/?sv=2020-04-08&se=2021-06-19T20%3A56%3A15Z&sr=c&sp=rwl&sig=Til9uZlFREFVEymAYxmGIA0I1cv%2BYE8%2FAoPIvSPe7bQ%3D'
+azcopy cp 'https://biglmdiag.blob.core.windows.net/vinvl/' $TARGET --recursive
