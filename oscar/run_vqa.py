@@ -24,7 +24,7 @@ from transformers.pytorch_transformers import WEIGHTS_NAME, BertTokenizer, BertC
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
 
 from oscar.utils.logger import setup_logger
-from oscar.utils.misc import set_seed, mkdir
+from oscar.utils.misc import set_seed, mkdir, save_checkpoint
 from oscar.utils.task_utils import (_truncate_seq_pair, convert_examples_to_features_vqa,
                         output_modes, processors)
 from tqdm import tqdm
@@ -528,6 +528,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     for epoch in range(int(args.num_train_epochs)):
     #for epoch in train_iterator:
         #epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+        logger.info("====== Epoch: %d, global_step: %d ======" % (epoch, global_step))
         total_loss = 0
         train_score = 0
         total_norm = 0
@@ -588,62 +589,31 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                 model.zero_grad()
                 global_step += 1
 
-            if args.debug and step == 10: break
+            if (args.save_steps > 0 and global_step % args.save_steps == 0) or global_step == t_total:
+                checkpoint_dir = save_checkpoint(model, tokenizer, args, epoch, global_step)
+                if args.evaluate_during_training: 
+                    eval_score = evaluate(args, model, eval_dataset, prefix=global_step)
+                    if eval_score > best_score:
+                        best_score = eval_score
+                        best_model['epoch'] = epoch
+                        best_model['global_step'] = global_step
+                    
+                    epoch_log = {'epoch': epoch, 'global_step': global_step, 
+                            'eval_score': eval_score, 'best_score': best_score}
+                    log_json.append(epoch_log)
+                    with open(args.output_dir + '/eval_logs.json', 'w') as fp:
+                        json.dump(log_json, fp)
 
-
-        if (args.save_epoch > 0) and (epoch % args.save_epoch == 0) and (epoch > args.save_after_epoch):
-            # evaluation
-            logger.info("====== Epoch: %d, global_step: %d ======" % (epoch, global_step))
-            eval_score = evaluate(args, model, eval_dataset, prefix=global_step)
-            if eval_score > best_score:
-                best_score = eval_score
-                best_model['epoch'] = epoch
-                best_model['model'] = copy.deepcopy(model)
-
-            # save checkpoints and log on the main process
-            if args.local_rank in [-1, 0]:
-                output_dir = os.path.join(args.output_dir, 'checkpoint-{}-{}'.format(epoch, global_step))
-                if not os.path.exists(output_dir): os.makedirs(output_dir)
-                model_to_save = best_model['model'].module if hasattr(model, 'module') else best_model['model']  # Take care of distributed/parallel training
-
-                save_num = 0
-                while (save_num < 10):
-                    try:
-                        # logger.info("Saving model attempt: {}".format(save_num))
-                        model_to_save.save_pretrained(output_dir)
-                        torch.save(args, os.path.join(output_dir, 'training_args.bin'))
-                        tokenizer.save_pretrained(output_dir)
-                        break
-                    except:
-                        save_num += 1
-                # logger.info("Saving model checkpoint {0} to {1}".format(epoch, output_dir))
-
-                epoch_log = {'epoch': epoch, 'eval_score': eval_score, 'best_score': best_score}
-                log_json.append(epoch_log)
-                with open(args.output_dir + '/eval_logs.json', 'w') as fp:
-                    json.dump(log_json, fp)
+            if args.debug and step == 10: 
+                args.save_steps = 10
+                break
 
         t_end = time.time()
         logger.info("Progress: {}%, Time: {:.2f}".format(100*(epoch + 1) // args.num_train_epochs, t_end - t_start))
 
-    if args.local_rank in [-1, 0]: # Save the final model checkpoint
-        with open(args.output_dir + '/eval_logs.json', 'w') as fp:
-            json.dump(log_json, fp)
-
-        output_dir = os.path.join(args.output_dir, 'best-{}'.format(best_model['epoch']))
-        if not os.path.exists(output_dir): os.makedirs(output_dir)
-        model_to_save = best_model['model'].module if hasattr(model, 'module') else best_model['model']  # Take care of distributed/parallel training
-
-        save_num = 0
-        while (save_num < 10):
-            try:
-                model_to_save.save_pretrained(output_dir)
-                torch.save(args, os.path.join(output_dir, 'training_args.bin'))
-                tokenizer.save_pretrained(output_dir)
-                break
-            except:
-                save_num += 1
-        logger.info("Saving the best model checkpoint epoch {} to {}".format(best_model['epoch'], output_dir))
+    
+    logger.info("Saving the best checkpoint at epoch {}, global_step {}.".format(best_model['epoch'], best_model['global_step']))
+    save_checkpoint(model, tokenizer, args, model_name='best')
 
     return global_step, tr_loss / global_step
 
@@ -910,7 +880,7 @@ def main():
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
     parser.add_argument('--logging_steps', type=int, default=4000, help="Log every X updates steps.")
-    parser.add_argument('--save_steps', type=int, default=-1, help="Save checkpoint every X updates steps.")
+    parser.add_argument('--save_steps', type=int, default=5000, help="Save checkpoint every X updates steps.")
     parser.add_argument('--save_epoch', type=int, default=1, help="Save checkpoint every X epochs.")
     parser.add_argument('--save_after_epoch', type=int, default=-1, help="Save checkpoint after epoch.")
     parser.add_argument("--eval_all_checkpoints", action='store_true',

@@ -11,9 +11,8 @@ stamp = ''
 if not stamp:
     stamp = datetime.now().strftime('%Y%m%d.%H%M%S')
 
-
 task = 'vqa'
-output_dir = 't-lqing/output/oscar.{}'
+output_dir = 't-lqing/output/oscar.{}'.format(stamp)
 submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num_nodes 1 --exp_name liqing-{} " \
              "--config_yaml ~/.azureml/{}.yaml --cmd \"{}\""
 
@@ -50,21 +49,12 @@ if task == 'caption':
 
 elif task == 'vqa':
     job_cmd = "oscar/run_vqa.py \
-        --data_label_type mask --img_feature_type faster_r-cnn \
-        --task_name vqa_text --data_dir datasets/vqa --txt_data_dir datasets/vqa \
-        --label_file datasets/vqa/trainval_ans2label.pkl \
-        --model_type bert --model_name_or_path models/pretrained_base/checkpoint-2000000 \
-        --do_train --do_lower_case --max_seq_length 128 \
-        --per_gpu_eval_batch_size 256 --per_gpu_train_batch_size 32 \
-        --learning_rate 5e-05 --num_train_epochs 25 \
-        --save_epoch 1 --seed 88 --evaluate_during_training --logging_steps 4000 --drop_out 0.3 \
-        --weight_decay 0.05 --warmup_steps 0 --loss_type bce --img_feat_format pt \
-        --classifier linear --cls_hidden_scale 3 \
-        --output_dir output/ \
+        --do_train --do_lower_case \
+        --evaluate_during_training --save_steps 1000 \
     "
+    output_dir = 't-lqing/experiments/vqa/Oscar_B'
 
 
-resolved_output_dir = output_dir.format(stamp)
-resolved_submit_cmd = submit_cmd.format(resolved_output_dir, task, ws_config, job_cmd)
+resolved_submit_cmd = submit_cmd.format(output_dir, task, ws_config, job_cmd)
 print(resolved_submit_cmd)
 os.system(resolved_submit_cmd)

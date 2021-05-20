@@ -64,3 +64,20 @@ def get_world_size():
     if not dist.is_initialized():
         return 1
     return dist.get_world_size()
+
+def save_checkpoint(model, tokenizer, args, epoch=0, iteration=0, num_trial=10, model_name=None):
+    model_name = model_name or 'checkpoint-{}-{}'.format(epoch, iteration)
+    checkpoint_dir = op.join(args.output_dir, model_name)
+    if not is_main_process():
+        return checkpoint_dir
+    mkdir(checkpoint_dir)
+    model_to_save = model.module if hasattr(model, 'module') else model
+    for i in range(num_trial):
+        try:
+            model_to_save.save_pretrained(checkpoint_dir)
+            torch.save(args, op.join(checkpoint_dir, 'training_args.bin'))
+            tokenizer.save_pretrained(checkpoint_dir)
+            break
+        except:
+            pass
+    return checkpoint_dir
