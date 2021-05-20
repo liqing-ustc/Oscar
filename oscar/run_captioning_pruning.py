@@ -1054,7 +1054,7 @@ def main():
         if args.prune_before_train:
             # evaluate the model before pruning
             logger.info("Evaluate the mode before pruning:")
-            # evaluate_file = evaluate(args, val_dataloader, model, tokenizer, args.model_name_or_path)
+            evaluate_file = evaluate(args, val_dataloader, model, tokenizer, args.model_name_or_path)
 
             original_flops = calculate_flops(model)
             original_num_params = sum(p.numel() for p in model.parameters())

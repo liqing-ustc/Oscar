@@ -15,7 +15,16 @@
 #     --output_dir output/ \
 #     --self_slimming --inter_slimming --l1_loss_self_coef=1e-4 --l1_loss_inter_coef=1e-4 \
 #     --pruning_strategy small --pruning_ratio 0.2 --seed 0
-python -m torch.distributed.launch --nproc_per_node 1 oscar/run_vqa.py \
+
+# python -m torch.distributed.launch --nproc_per_node 1 oscar/run_vqa_pruning.py \
+#     --output_dir output/vqa \
+#     --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 8 \
+#     --self_slimming --inter_slimming --l1_loss_self_coef=1e-4 --l1_loss_inter_coef=1e-4 \
+#     --do_train --do_lower_case --evaluate_during_training --debug 
+python -m torch.distributed.launch --nproc_per_node 1 oscar/run_vqa_pruning.py \
+    --model_name_or_path=output/vqa/Oscar_B+pruning_coef/checkpoint-0-1000 \
     --output_dir output/vqa \
     --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 8 \
-    --do_train --do_lower_case --evaluate_during_training --debug
+    --self_slimming --inter_slimming \
+    --prune_before_train --pruning_ratio=0.8 \
+    --do_train --do_lower_case --evaluate_during_training --debug 
