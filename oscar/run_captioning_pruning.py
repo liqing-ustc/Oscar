@@ -830,16 +830,24 @@ def ensure_init_process_group(local_rank=None, port=12345):
     return local_rank
 
 from thop import profile
+from copy import deepcopy
 def calculate_flops(model):
     batch_size, n_img_tokens, n_txt_tokens = 1, 50, 35
     input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
     img_feat = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
     attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, n_img_tokens+n_txt_tokens, dtype=torch.int64)
     masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)
+    is_training = False
+    inputs = (input_ids, img_feat, attention_mask, masked_pos, None, None, None, None, is_training, None)
+    model = deepcopy(model)
     model.to('cpu')
-    macs, params = profile(model.bert, (input_ids, None, attention_mask, None, None, img_feat))
-    flops = 2 * macs
-    pass
+    flops, params = profile(model, inputs) # one mul-add is counted as 1 flop
+    flops = round(flops / 1e9, 2)
+    return flops
+
+    # from fvcore.nn import flop_count
+    # flops = flop_count(model, inputs)
+    # print(flops)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -976,7 +984,6 @@ def main():
     parser.add_argument("--inter_pruning_ratio", default=0., type=float, help="pruning ratio for intermediate layers.")
     parser.add_argument("--self_pruning_ratio", default=0., type=float, help="pruning ratio for self attentions.")
     parser.add_argument("--pruning_ratio", default=0., type=float, help="pruning ratio for both self attentions and intermediate layers.")
-    parser.add_argument("--flops", action='store_true', help="calculate the FLOPS of the model.")
     parser.add_argument("--pruning_strategy", default="small", type=str, help="The pruning strategy based on the coefficients: [large, random, small])")
     
     args = parser.parse_args()
@@ -1047,11 +1054,9 @@ def main():
         if args.prune_before_train:
             # evaluate the model before pruning
             logger.info("Evaluate the mode before pruning:")
-            evaluate_file = evaluate(args, val_dataloader, model, tokenizer, args.model_name_or_path)
+            # evaluate_file = evaluate(args, val_dataloader, model, tokenizer, args.model_name_or_path)
 
-            if args.flops:
-                flops = calculate_flops(model)
-
+            original_flops = calculate_flops(model)
             original_num_params = sum(p.numel() for p in model.parameters())
             # perform the intermediate layer pruning based on the slimming coef
             bert_layers = []
@@ -1092,6 +1097,7 @@ def main():
                 logger.info('pruned heads: {}'.format(str(pruned_heads)))
                 m.prune_heads(pruned_heads)
 
+            pruned_flops = calculate_flops(model)
             pruned_num_params = sum(p.numel() for p in model.parameters())
             logger.info(
                 "Pruning: original num of params: %.2e, after pruning %.2e (%.1f percents)",
@@ -1099,8 +1105,16 @@ def main():
                 pruned_num_params,
                 pruned_num_params / original_num_params * 100,
             )
+            logger.info(
+                "Pruning: original FLOPS: %.2f, after pruning %.2f (%.1f percents)",
+                original_flops,
+                pruned_flops,
+                pruned_flops / original_flops * 100,
+            )
             saved_info['params'] = round(pruned_num_params / 1e6, 2)
             saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
+            saved_info['flops'] = pruned_flops
+            saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
 
             # save and evaluate the pruned model
             logger.info("Evaluate the mode after pruning:")
