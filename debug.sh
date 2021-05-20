@@ -17,5 +17,5 @@
 #     --pruning_strategy small --pruning_ratio 0.2 --seed 0
 python -m torch.distributed.launch --nproc_per_node 1 oscar/run_vqa.py \
     --output_dir output/vqa \
-    --per_gpu_eval_batch_size 4 --per_gpu_train_batch_size 4 \
+    --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 8 \
     --do_train --do_lower_case --evaluate_during_training --debug

@@ -23,7 +23,8 @@ from oscar.modeling.modeling_bert import ImageBertForSequenceClassification
 from transformers.pytorch_transformers import WEIGHTS_NAME, BertTokenizer, BertConfig
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
 
-from oscar.utils.misc import set_seed
+from oscar.utils.logger import setup_logger
+from oscar.utils.misc import set_seed, mkdir
 from oscar.utils.task_utils import (_truncate_seq_pair, convert_examples_to_features_vqa,
                         output_modes, processors)
 from tqdm import tqdm
@@ -547,10 +548,6 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
             logger.info("\t change loss type from kl to bce")
             model.loss_type = 'bce'
 
-        # debug
-        #epoch = 20
-        #global_step = epoch*math.ceil(len(train_dataset)/(args.train_batch_size * args.gradient_accumulation_steps * (torch.distributed.get_world_size() if args.local_rank != -1 else 1)))
-
         t_start = time.time()
         for step, batch in enumerate(train_dataloader):
             model.train()
@@ -591,72 +588,43 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                 model.zero_grad()
                 global_step += 1
 
-                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:# Log metrics
-                    if args.local_rank not in [-1, 0]:
-                        torch.distributed.barrier()
+            if args.debug and step == 10: break
 
-                    if args.local_rank in [-1, 0] and args.evaluate_during_training:
-                    #if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                        logger.info("Epoch: %d, global_step: %d" % (epoch, global_step))
-                        eval_result, eval_score, upper_bound = evaluate(args, model, eval_dataset, prefix=global_step)
-                        if eval_score > best_score:
-                            best_score = eval_score
-                            best_model['epoch'] = epoch
-                            best_model['model'] = copy.deepcopy(model)
 
-                        logger.info("EVALERR: {}%".format(100 * best_score))
+        if (args.save_epoch > 0) and (epoch % args.save_epoch == 0) and (epoch > args.save_after_epoch):
+            # evaluation
+            logger.info("====== Epoch: %d, global_step: %d ======" % (epoch, global_step))
+            eval_score = evaluate(args, model, eval_dataset, prefix=global_step)
+            if eval_score > best_score:
+                best_score = eval_score
+                best_model['epoch'] = epoch
+                best_model['model'] = copy.deepcopy(model)
 
-                    if args.local_rank == 0:
-                        torch.distributed.barrier()
+            # save checkpoints and log on the main process
+            if args.local_rank in [-1, 0]:
+                output_dir = os.path.join(args.output_dir, 'checkpoint-{}-{}'.format(epoch, global_step))
+                if not os.path.exists(output_dir): os.makedirs(output_dir)
+                model_to_save = best_model['model'].module if hasattr(model, 'module') else best_model['model']  # Take care of distributed/parallel training
 
-                    logging_loss = tr_loss
+                save_num = 0
+                while (save_num < 10):
+                    try:
+                        # logger.info("Saving model attempt: {}".format(save_num))
+                        model_to_save.save_pretrained(output_dir)
+                        torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+                        tokenizer.save_pretrained(output_dir)
+                        break
+                    except:
+                        save_num += 1
+                # logger.info("Saving model checkpoint {0} to {1}".format(epoch, output_dir))
 
-            #if args.max_steps > 0 and global_step > args.max_steps:
-            #    epoch_iterator.close()
-            #    break
-
-        # evaluation
-        logger.info("Epoch: %d, global_step: %d" % (epoch, global_step))
-        eval_result, eval_score, upper_bound = evaluate(args, model, eval_dataset, prefix=global_step)
-        if eval_score > best_score:
-            best_score = eval_score
-            best_model['epoch'] = epoch
-            best_model['model'] = copy.deepcopy(model)
-            #best_model['optimizer'] = copy.deepcopy(optimizer.state_dict())
-
-        # save checkpoints
-        if (args.local_rank in [-1, 0]) and (args.save_epoch>0 and epoch%args.save_epoch == 0) and (epoch>args.save_after_epoch):
-            output_dir = os.path.join(args.output_dir, 'checkpoint-{}-{}'.format(epoch, global_step))
-            if not os.path.exists(output_dir): os.makedirs(output_dir)
-            model_to_save = best_model['model'].module if hasattr(model, 'module') else best_model['model']  # Take care of distributed/parallel training
-
-            save_num = 0
-            while (save_num < 10):
-                try:
-                    logger.info("Saving model attempt: {}".format(save_num))
-                    model_to_save.save_pretrained(output_dir)
-                    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
-                    tokenizer.save_pretrained(output_dir)
-                    break
-                except:
-                    save_num += 1
-            logger.info("Saving model checkpoint {0} to {1}".format(epoch, output_dir))
-
-        epoch_log = {'epoch': epoch, 'eval_score': eval_score, 'best_score':best_score}
-        log_json.append(epoch_log)
-        if args.local_rank in [-1, 0]:
-            with open(args.output_dir + '/eval_logs.json', 'w') as fp:
-                json.dump(log_json, fp)
-
-        logger.info("PROGRESS: {}%".format(round(100*(epoch + 1) / args.num_train_epochs, 4)))
-        logger.info("EVALERR: {}%".format(100*best_score))
+                epoch_log = {'epoch': epoch, 'eval_score': eval_score, 'best_score': best_score}
+                log_json.append(epoch_log)
+                with open(args.output_dir + '/eval_logs.json', 'w') as fp:
+                    json.dump(log_json, fp)
 
         t_end = time.time()
-        logger.info('Epoch: %d, Train Time: %.3f' % (epoch, t_end - t_start))
-
-        #if args.max_steps > 0 and global_step > args.max_steps:
-        #    train_iterator.close()
-        #    break
+        logger.info("Progress: {}%, Time: {:.2f}".format(100*(epoch + 1) // args.num_train_epochs, t_end - t_start))
 
     if args.local_rank in [-1, 0]: # Save the final model checkpoint
         with open(args.output_dir + '/eval_logs.json', 'w') as fp:
@@ -681,107 +649,57 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
 
 
 def evaluate(args, model, eval_dataset=None, prefix=""):
-    # Loop to handle MNLI double evaluation (matched, mis-matched)
-    eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
-    eval_outputs_dirs = (args.output_dir, args.output_dir + '-MM') if args.task_name == "mnli" else (args.output_dir,)
+    # assert args.local_rank in [-1, 0] # only run evaluation on the main process
 
-    #if args.n_gpu > 1: model = torch.nn.DataParallel(model) # debug: single-gpu or multi-gpus
+    batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+    eval_dataloader = DataLoader(eval_dataset, num_workers=args.workers, batch_size=batch_size)
 
-    results = []
-    t_start = time.time()
-    for eval_task, eval_output_dir in zip(eval_task_names, eval_outputs_dirs):
-        if not os.path.exists(eval_output_dir) and args.local_rank in [-1, 0]: os.makedirs(eval_output_dir)
+    logger.info("Running evaluation {}: Num examples = {}, Batch size = {}.".format(prefix, len(eval_dataset), batch_size))
+    eval_loss = 0.0
+    nb_eval_steps = 0
+    preds = None
+    out_label_ids = None
+    num_data = 0
+    score = 0
+    upper_bound = 0
+    results_dict = {}
 
-        args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
-        # Note that DistributedSampler samples randomly
-        eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
-        eval_dataloader = DataLoader(eval_dataset, num_workers=args.workers, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    for batch in eval_dataloader:
+    #for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        model.eval()
+        batch = tuple(t.to(args.device) for t in batch)
 
-        # Eval!
-        logger.info("***** Running evaluation {} *****".format(prefix))
-        logger.info("  Num examples = %d", len(eval_dataset))
-        logger.info("  Batch size = %d", args.eval_batch_size)
-        eval_loss = 0.0
-        nb_eval_steps = 0
-        preds = None
-        out_label_ids = None
-        num_data = 0
-        score = 0
-        upper_bound = 0
-        results_dict = {}
+        with torch.no_grad():
+            inputs = {'input_ids':      batch[0],
+                        'attention_mask': batch[1],
+                        'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
+                        'labels':         batch[4],
+                        'img_feats':      None if args.img_feature_dim == -1 else batch[5]}
+            outputs = model(**inputs)
+            tmp_eval_loss, logits = outputs[:2]
 
-        for batch in eval_dataloader:
-        #for batch in tqdm(eval_dataloader, desc="Evaluating"):
-            model.eval()
-            batch = tuple(t.to(args.device) for t in batch)
+            eval_loss += tmp_eval_loss.mean().item()
 
-            with torch.no_grad():
-                inputs = {'input_ids':      batch[0],
-                          'attention_mask': batch[1],
-                          'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
-                          'labels':         batch[4],
-                          'img_feats':      None if args.img_feature_dim == -1 else batch[5]}
-                outputs = model(**inputs)
-                tmp_eval_loss, logits = outputs[:2]
+            # batch_score = compute_score_with_logits(logits, batch[4]).sum()
+            batch_score = torch.sum(
+                compute_score_with_logits(logits, batch[4]), 1)
+            # update results_dict
+            results_dict.update(
+                {qa_ind: score for qa_ind, score in
+                    zip(batch[6].view(-1).tolist(), batch_score.tolist())}
+            )
+            score += batch_score.sum().item()
+            upper_bound += (batch[4].max(1)[0]).sum().item()
+            num_data += logits.size(0)
 
-                eval_loss += tmp_eval_loss.mean().item()
+        nb_eval_steps += 1
 
-                # batch_score = compute_score_with_logits(logits, batch[4]).sum()
-                batch_score = torch.sum(
-                    compute_score_with_logits(logits, batch[4]), 1)
-                # update results_dict
-                results_dict.update(
-                    {qa_ind: score for qa_ind, score in
-                     zip(batch[6].view(-1).tolist(), batch_score.tolist())}
-                )
-                score += batch_score.sum().item()
-                upper_bound += (batch[4].max(1)[0]).sum().item()
-                num_data += logits.size(0)
+    assert num_data == len(eval_dataset)
+    score = score / num_data
+    upper_bound = upper_bound / num_data
+    logger.info("Eval Score: %.3f (<= %.3f)" % (100*score, 100*upper_bound))
 
-                # debug
-                #val, idx = logits.max(1)
-                #logger.info('idx: %s, batch[4]: %s' % (str(idx.shape), str(batch[3].shape)))
-                #for i in range(idx.size(0)):
-                #    logger.info('idx: %d, pred: %d, real: %d' % (idx[i].item(), eval_dataset.labels[idx[i].item()], batch[3][i].item()))
-
-            nb_eval_steps += 1
-
-            #if preds is None:
-            #    preds = logits.detach().cpu().numpy()
-            #    out_label_ids = inputs['labels'].detach().cpu().numpy()
-            #else:
-            #    preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-            #    out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
-
-        score = score / num_data
-        upper_bound = upper_bound / num_data
-
-        logger.info("Eval Results:")
-        logger.info("Eval Score: %.3f" % (100*score))
-        logger.info("Eval Upper Bound: %.3f" % (100*upper_bound))
-        # with open(os.path.join(args.data_dir, 'val_results.json'),
-        #           'w') as f:
-        #     json.dump(results_dict, f)
-
-    t_end = time.time()
-    logger.info('Eva Time Cost: %.3f' % (t_end - t_start))
-
-        #eval_loss = eval_loss / nb_eval_steps
-        #if args.output_mode == "classification":
-        #    preds = np.argmax(preds, axis=1)
-        #elif args.output_mode == "regression":
-        #    preds = np.squeeze(preds)
-        #result = compute_metrics(eval_task, preds, out_label_ids)
-        #results.update(result)
-
-        #output_eval_file = os.path.join(eval_output_dir, "eval_results.txt")
-        #with open(output_eval_file, "w") as writer:
-        #    logger.info("***** Eval results {} *****".format(prefix))
-        #    for key in sorted(result.keys()):
-        #        logger.info("  %s = %s", key, str(result[key]))
-        #        writer.write("%s = %s\n" % (key, str(result[key])))
-
-    return results, score, upper_bound
+    return score
 
 
 def test(args, model, eval_dataset=None, prefix=""):
@@ -1029,6 +947,11 @@ def main():
 
     args = parser.parse_args()
 
+    output_dir = args.output_dir
+    mkdir(output_dir)
+    global logger
+    logger = setup_logger("vqa", output_dir, args.local_rank)
+
     if args.philly:  # use philly
         logger.info('Info: Use Philly, all the output folders are reset.')
         args.output_dir = os.path.join(os.getenv('PT_OUTPUT_DIR'), args.output_dir)
@@ -1037,7 +960,6 @@ def main():
     #if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
     #    raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
 
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train: logger.info("Output Directory Exists.")
 
     # Setup distant debugging if needed
     if args.server_ip and args.server_port:
@@ -1059,8 +981,8 @@ def main():
     args.device = device
 
     # Setup logging
-    logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-                        datefmt = '%m/%d/%Y %H:%M:%S', level = logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+    # logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    #                     datefmt = '%m/%d/%Y %H:%M:%S', level = logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
                     args.local_rank, device, args.n_gpu, bool(args.local_rank != -1), args.fp16)
 
@@ -1188,7 +1110,7 @@ def main():
             global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
             model = model_class.from_pretrained(checkpoint, config=config)
             model.to(args.device)
-            result, score, upper_bound = evaluate(args, model, eval_dataset, prefix=global_step)
+            score = evaluate(args, model, eval_dataset, prefix=global_step)
             #result = dict((k + '_{}'.format(global_step), v) for k, v in result.items())
             #results.update(result)
 
