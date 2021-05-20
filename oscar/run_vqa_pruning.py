@@ -6,6 +6,7 @@ import argparse
 import glob
 import logging
 import os
+import os.path as op
 import copy, time, json
 import base64
 
@@ -22,6 +23,7 @@ import _pickle as cPickle
 from oscar.modeling.modeling_bert import ImageBertForSequenceClassification
 from transformers.pytorch_transformers import WEIGHTS_NAME, BertTokenizer, BertConfig
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
+from transformers.pytorch_transformers.modeling_bert import BertSelfAttention, BertLayer, BertAttention
 
 from oscar.utils.logger import setup_logger
 from oscar.utils.misc import set_seed, mkdir, save_checkpoint
@@ -510,8 +512,8 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", t_total)
 
-    global_step = 0
-    tr_loss, logging_loss = 0.0, 0.0
+    global_step, global_loss, global_acc = 0, 0.0, 0.0
+    l1_self_loss, l0_self_loss, l1_inter_loss, l0_inter_loss = 0., 0., 0., 0.
     model.zero_grad()
     #train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args.seed, args.n_gpu)  # Added here for reproductibility (even between python 2 and 3)
@@ -567,6 +569,33 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
 
             if args.n_gpu > 1: loss = loss.mean() # mean() to average on multi-gpu parallel training
 
+            if args.l1_loss_self_coef > 0.0:
+                l1_self_loss = 0.0
+                for m in model.modules():
+                    if isinstance(m, BertSelfAttention) and m.self_slimming:
+                        l1_self_loss += m.slimming_coef.abs().sum()
+                loss += l1_self_loss * args.l1_loss_self_coef
+
+            if args.l1_loss_inter_coef > 0.0:
+                l1_inter_loss = 0.0
+                for m in model.modules():
+                    if isinstance(m, BertLayer) and m.inter_slimming:
+                        l1_inter_loss += m.slimming_coef.abs().sum()
+                loss += l1_inter_loss * args.l1_loss_inter_coef
+
+            epsilon = 0.1
+            if args.l1_loss_self_coef > 0.0:
+                l0_self_loss = 0.0
+                for m in model.modules():
+                    if isinstance(m, BertSelfAttention) and m.self_slimming:
+                        l0_self_loss += (m.slimming_coef.abs() > epsilon).sum()
+
+            if args.l1_loss_inter_coef > 0.0:
+                l0_inter_loss = 0.0
+                for m in model.modules():
+                    if isinstance(m, BertLayer) and m.inter_slimming:
+                        l0_inter_loss += (m.slimming_coef.abs() > epsilon).sum()
+
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
@@ -579,15 +608,23 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                 total_norm += torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 count_norm += 1
 
-            batch_score = compute_score_with_logits(logits, batch[4]).sum()
-            train_score += batch_score.item()
+            batch_acc = compute_score_with_logits(logits, batch[4]).sum(1).mean()
 
-            tr_loss += loss.item()
+            global_loss += loss.item()
+            global_acc += batch_acc
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 scheduler.step()  # Update learning rate schedule
                 optimizer.step()
                 model.zero_grad()
                 global_step += 1
+
+                if global_step % args.logging_steps == 0:
+                    logger.info("Epoch: {}, global_step: {}, lr: {:.6f}, loss: {:.4f} ({:.4f}), " \
+                        "score: {:.4f} ({:.4f}), l1 loss: self {:.4f} ({}), inter {:.4f} ({})".format(epoch, global_step, 
+                        optimizer.param_groups[0]["lr"], loss, global_loss / global_step, 
+                        batch_acc, global_acc / global_step, 
+                        l1_self_loss, l0_self_loss, l1_inter_loss, l0_inter_loss)
+                    )
 
             if (args.save_steps > 0 and global_step % args.save_steps == 0) or global_step == t_total:
                 checkpoint_dir = save_checkpoint(model, tokenizer, args, epoch, global_step)
@@ -616,7 +653,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     logger.info("Saving the best checkpoint at epoch {}, global_step {}.".format(best_model['epoch'], best_model['global_step']))
     save_checkpoint(best_model['model'], tokenizer, args, model_name='best')
 
-    return global_step, tr_loss / global_step
+    return global_step, global_loss / global_step, best_score
 
 
 def evaluate(args, model, eval_dataset=None, prefix=""):
@@ -662,10 +699,11 @@ def evaluate(args, model, eval_dataset=None, prefix=""):
             score += batch_score.sum().item()
             upper_bound += (batch[4].max(1)[0]).sum().item()
             num_data += logits.size(0)
-
+        
         nb_eval_steps += 1
 
-    assert num_data == len(eval_dataset)
+        if args.debug and nb_eval_steps == 10: break
+
     score = score / num_data
     upper_bound = upper_bound / num_data
     logger.info("Eval Score: %.3f (<= %.3f)" % (100*score, 100*upper_bound))
@@ -807,6 +845,21 @@ def target_tensor(len, labels, scores):
 
     return target
 
+from thop import profile
+from copy import deepcopy
+def calculate_flops(model):
+    batch_size, n_img_tokens, n_txt_tokens = 1, 50, 35
+    input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
+    img_feat = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
+    attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, dtype=torch.int64)
+    masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)
+    is_training = False
+    inputs = (input_ids, None, attention_mask, None, None, None, img_feat)
+    model = deepcopy(model)
+    model.to('cpu')
+    flops, params = profile(model, inputs) # one mul-add is counted as 1 flop
+    flops = round(flops / 1e9, 2)
+    return flops
 
 def main():
     parser = argparse.ArgumentParser()
@@ -880,7 +933,7 @@ def main():
     parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument('--logging_steps', type=int, default=4000, help="Log every X updates steps.")
+    parser.add_argument('--logging_steps', type=int, default=20, help="Log every X updates steps.")
     parser.add_argument('--save_steps', type=int, default=5000, help="Save checkpoint every X updates steps.")
     parser.add_argument('--save_epoch', type=int, default=1, help="Save checkpoint every X epochs.")
     parser.add_argument('--save_after_epoch', type=int, default=-1, help="Save checkpoint after epoch.")
@@ -904,19 +957,23 @@ def main():
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
     parser.add_argument("--debug", action='store_true', help="the debug mode to use val for train.")
 
-    #args = '--data_dir ../vqa/ban-vqa/data/qal_pairs --model_type bert --model_name_or_path bert-base-uncased --task_name vqa_text ' \
-    #       '--do_train --do_eval --do_lower_case --max_seq_length 40 --per_gpu_eval_batch_size 16 --per_gpu_train_batch_size 16 --learning_rate 2e-5 ' \
-    #       '--num_train_epochs 20.0 --output_dir ./results/vqa_text --label_file ../vqa/ban-vqa/data/cache/trainval_ans2label.pkl ' \
-    #       '--save_steps 5000 --overwrite_output_dir --max_img_seq_length 1 --img_feature_dim 565 --img_feature_type dis_code '
+    # for pruning
+    parser.add_argument("--self_slimming", action='store_true', help="slimming self-attention heads in multi-head attention.")
+    parser.add_argument("--inter_slimming", action='store_true', help="slimming intermediate layer in multi-head attention.")
+    parser.add_argument("--l1_loss_self_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
+    parser.add_argument("--l1_loss_inter_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
 
-    #args = '--data_dir ../vqa/ban-vqa/data/qal_pairs --model_type bert --model_name_or_path bert-base-uncased --task_name vqa_text ' \
-    #       '--do_train --do_eval --do_lower_case --max_seq_length 40 --per_gpu_eval_batch_size 16 --per_gpu_train_batch_size 16 --learning_rate 2e-5 ' \
-    #       '--num_train_epochs 20.0 --output_dir ./results/vqa_text --label_file ../vqa/ban-vqa/data/cache/trainval_ans2label.pkl ' \
-    #       '--save_steps 5000 --overwrite_output_dir --max_img_seq_length 10 --img_feature_dim 565 --img_feature_type other '
-
-    #args = parser.parse_args(args.split())
+    parser.add_argument("--prune_before_train", action='store_true', help="prune the model before training.")
+    parser.add_argument("--slimming_coef_step", default=0, type=int, help="the training step used for pruning.")
+    parser.add_argument("--inter_pruning_method", default="global", type=str, help="the method used to prune intermediate layers.")
+    parser.add_argument("--self_pruning_method", default="layerwise", type=str, help="the method used to prune self attention heads.")
+    parser.add_argument("--inter_pruning_ratio", default=0., type=float, help="pruning ratio for intermediate layers.")
+    parser.add_argument("--self_pruning_ratio", default=0., type=float, help="pruning ratio for self attentions.")
+    parser.add_argument("--pruning_ratio", default=0., type=float, help="pruning ratio for both self attentions and intermediate layers.")
+    parser.add_argument("--pruning_strategy", default="small", type=str, help="The pruning strategy based on the coefficients: [large, random, small])")
 
     args = parser.parse_args()
+    saved_info = {'config': vars(args).copy()}
 
     output_dir = args.output_dir
     mkdir(output_dir)
@@ -927,18 +984,6 @@ def main():
         logger.info('Info: Use Philly, all the output folders are reset.')
         args.output_dir = os.path.join(os.getenv('PT_OUTPUT_DIR'), args.output_dir)
         logger.info('OUTPUT_DIR:', args.output_dir)
-
-    #if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
-    #    raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
-
-
-    # Setup distant debugging if needed
-    if args.server_ip and args.server_port:
-        # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
-        import ptvsd
-        logger.info("Waiting for debugger attach")
-        ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
-        ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
@@ -951,9 +996,6 @@ def main():
         args.n_gpu = 1
     args.device = device
 
-    # Setup logging
-    # logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    #                     datefmt = '%m/%d/%Y %H:%M:%S', level = logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
                     args.local_rank, device, args.n_gpu, bool(args.local_rank != -1), args.fp16)
 
@@ -991,6 +1033,8 @@ def main():
     config.loss_type = args.loss_type
     config.classifier = args.classifier
     config.cls_hidden_scale = args.cls_hidden_scale
+    config.self_slimming = args.self_slimming
+    config.inter_slimming = args.inter_slimming
     #config.use_img_layernorm = args.use_img_layernorm
     
     # load discrete code
@@ -1038,35 +1082,89 @@ def main():
     if args.do_train:
         #train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
         train_dataset = VQADataset(args, 'train', tokenizer) if not args.debug else eval_dataset
-        global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer)
-        logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
+
+        if args.prune_before_train:
+            # evaluate the model before pruning
+            logger.info("Evaluate the mode before pruning:")
+            eval_score = evaluate(args, model, eval_dataset, prefix="original model")
+
+            original_flops = calculate_flops(model)
+            original_num_params = sum(p.numel() for p in model.parameters())
+            # perform the intermediate layer pruning based on the slimming coef
+            bert_layers = []
+            for m in model.modules():
+                if isinstance(m, BertLayer):
+                    bert_layers.append(m)
+
+            slimming_coefs = np.array([m.slimming_coef.detach().cpu().numpy().reshape(-1) for m in bert_layers])
+            if args.pruning_strategy == 'random':
+                slimming_coefs = np.random.rand(*slimming_coefs.shape)
+            elif args.pruning_strategy == 'large':
+                slimming_coefs = -slimming_coefs
+            quantile_axis = -1 if args.inter_pruning_method == 'layerwise' else None
+            threshold = np.quantile(slimming_coefs, args.inter_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
+            layers_masks = slimming_coefs > threshold
+            # layers_masks = get_pruning_mask(slimming_coefs, training_args.inter_pruning_ratio, training_args.inter_pruning_method)
+            for m, mask in zip(bert_layers, layers_masks):
+                pruned_inter_neurons = [i for i in range(config.intermediate_size) if mask[i] == 0]
+                logger.info('{} neurons are pruned'.format(len(pruned_inter_neurons)))
+                m.prune_inter_neurons(pruned_inter_neurons)
+
+            # perform the self-attention head pruning based on the slimming coef
+            attention_modules = []
+            for m in model.modules():
+                if isinstance(m, BertAttention):
+                    attention_modules.append(m)
+            slimming_coefs = np.array([m.self.slimming_coef.detach().cpu().numpy().reshape(-1) for m in attention_modules])
+            if args.pruning_strategy == 'random':
+                slimming_coefs = np.random.rand(*slimming_coefs.shape)
+            elif args.pruning_strategy == 'large':
+                slimming_coefs = -slimming_coefs
+            quantile_axis = -1 if args.self_pruning_method == 'layerwise' else None
+            threshold = np.quantile(slimming_coefs, args.self_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
+            layers_masks = slimming_coefs > threshold
+            for m, mask in zip(attention_modules, layers_masks):
+                # pruned_heads = [i for i in range(len(attention_modules)) if mask[i] == 0]
+                pruned_heads = [i for i in range(len(mask)) if mask[i] == 0]
+                logger.info('pruned heads: {}'.format(str(pruned_heads)))
+                m.prune_heads(pruned_heads)
+
+            pruned_flops = calculate_flops(model)
+            pruned_num_params = sum(p.numel() for p in model.parameters())
+            logger.info(
+                "Pruning: original num of params: %.2e, after pruning %.2e (%.1f percents)",
+                original_num_params,
+                pruned_num_params,
+                pruned_num_params / original_num_params * 100,
+            )
+            logger.info(
+                "Pruning: original FLOPS: %.2f, after pruning %.2f (%.1f percents)",
+                original_flops,
+                pruned_flops,
+                pruned_flops / original_flops * 100,
+            )
+            saved_info['params'] = round(pruned_num_params / 1e6, 2)
+            saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
+            saved_info['flops'] = pruned_flops
+            saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
+
+            # save and evaluate the pruned model
+            logger.info("Evaluate the mode after pruning:")
+            checkpoint_dir = save_checkpoint(model, tokenizer, args, 0, 0) 
+            eval_score = evaluate(args, model, eval_dataset, prefix="pruned model")
+
+        tic = time.time()
+        global_step, tr_loss, best_score = train(args, train_dataset, eval_dataset, model, tokenizer)
+        logger.info(" global_step = %s, average loss = %s, best score = %s", global_step, tr_loss, best_score)
+        saved_info['train_time'] = round((time.time() - tic) / 3600.0, 2)
+        saved_info['best_score'] = round(best_score * 100, 2)
+        json.dump(saved_info, open(op.join(args.output_dir, 'saved_info.json'), 'w'))
 
     # Training on train+val
     if args.do_train_val:
         train_dataset = VQADataset(args, 'train+val', tokenizer)
-        global_step, tr_loss = train(args, train_dataset, eval_dataset, model, tokenizer)
-        logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
-
-    # Saving best-practices: if you use defaults names for the model, you can reload it using from_pretrained()
-    if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        # Create output directory if needed
-        if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]: os.makedirs(args.output_dir)
-
-        logger.info("Saving model checkpoint to %s", args.output_dir)
-        # Save a trained model, configuration and tokenizer using `save_pretrained()`. They can then be reloaded using `from_pretrained()`
-        #model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-        #model_to_save.save_pretrained(args.output_dir)
-
-        tokenizer.save_pretrained(args.output_dir)
-
-        # Good practice: save your training arguments together with the trained model
-        torch.save(args, os.path.join(args.output_dir, 'training_args.bin'))
-
-        # Load a trained model and vocabulary that you have fine-tuned
-        #model = model_class.from_pretrained(args.output_dir)
-        #tokenizer = tokenizer_class.from_pretrained(args.output_dir)
-        #model.to(args.device)
-
+        global_step, tr_loss, best_score = train(args, train_dataset, eval_dataset, model, tokenizer)
+        logger.info(" global_step = %s, average loss = %s, best score = %s", global_step, tr_loss, best_score)
 
     # Evaluation
     #results = {}
