@@ -960,6 +960,7 @@ def main():
     # for pruning
     parser.add_argument("--self_slimming", action='store_true', help="slimming self-attention heads in multi-head attention.")
     parser.add_argument("--inter_slimming", action='store_true', help="slimming intermediate layer in multi-head attention.")
+    parser.add_argument("--l1_loss_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
     parser.add_argument("--l1_loss_self_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
     parser.add_argument("--l1_loss_inter_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
 
@@ -979,6 +980,9 @@ def main():
     mkdir(output_dir)
     global logger
     logger = setup_logger("vqa", output_dir, args.local_rank)
+
+    args.l1_loss_self_coef = args.l1_loss_self_coef or args.l1_loss_coef
+    args.l1_loss_inter_coef = args.l1_loss_inter_coef or args.l1_loss_coef
 
     if args.philly:  # use philly
         logger.info('Info: Use Philly, all the output folders are reset.')
