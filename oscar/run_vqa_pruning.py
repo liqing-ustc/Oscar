@@ -23,12 +23,12 @@ import _pickle as cPickle
 from oscar.modeling.modeling_bert import ImageBertForSequenceClassification
 from transformers.pytorch_transformers import WEIGHTS_NAME, BertTokenizer, BertConfig
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
-from transformers.pytorch_transformers.modeling_bert import BertSelfAttention, BertLayer, BertAttention
 
 from oscar.utils.logger import setup_logger
 from oscar.utils.misc import set_seed, mkdir, save_checkpoint
 from oscar.utils.task_utils import (_truncate_seq_pair, convert_examples_to_features_vqa,
                         output_modes, processors)
+from oscar.utils.pruning import prune, count_flops, calculate_l1_loss
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -519,11 +519,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     set_seed(args.seed, args.n_gpu)  # Added here for reproductibility (even between python 2 and 3)
 
     best_score = 0
-    best_model = {
-        'epoch': 0,
-        'model': copy.deepcopy(model), #model.state_dict(),
-        'optimizer_state': optimizer.state_dict()
-    }
+    best_model = {}
 
     #eval_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=True)
 
@@ -570,31 +566,12 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
             if args.n_gpu > 1: loss = loss.mean() # mean() to average on multi-gpu parallel training
 
             if args.l1_loss_self_coef > 0.0:
-                l1_self_loss = 0.0
-                for m in model.modules():
-                    if isinstance(m, BertSelfAttention) and m.self_slimming:
-                        l1_self_loss += m.slimming_coef.abs().sum()
+                l1_self_loss = calculate_l1_loss(model, 'self')
                 loss += l1_self_loss * args.l1_loss_self_coef
 
             if args.l1_loss_inter_coef > 0.0:
-                l1_inter_loss = 0.0
-                for m in model.modules():
-                    if isinstance(m, BertLayer) and m.inter_slimming:
-                        l1_inter_loss += m.slimming_coef.abs().sum()
+                l1_inter_loss = calculate_l1_loss(model, 'inter')
                 loss += l1_inter_loss * args.l1_loss_inter_coef
-
-            epsilon = 0.1
-            if args.l1_loss_self_coef > 0.0:
-                l0_self_loss = 0.0
-                for m in model.modules():
-                    if isinstance(m, BertSelfAttention) and m.self_slimming:
-                        l0_self_loss += (m.slimming_coef.abs() > epsilon).sum()
-
-            if args.l1_loss_inter_coef > 0.0:
-                l0_inter_loss = 0.0
-                for m in model.modules():
-                    if isinstance(m, BertLayer) and m.inter_slimming:
-                        l0_inter_loss += (m.slimming_coef.abs() > epsilon).sum()
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -610,20 +587,21 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
 
             batch_acc = compute_score_with_logits(logits, batch[4]).sum(1).mean()
 
-            global_loss += loss.item()
-            global_acc += batch_acc
+            mv = 0.999
+            global_loss = (mv * global_loss + (1-mv) * loss.item()) if global_step != 0 else loss.item()
+            global_acc = (mv * global_acc + (1-mv) * batch_acc) if global_step != 0 else batch_acc
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                scheduler.step()  # Update learning rate schedule
                 optimizer.step()
+                if not args.pruning_steps or global_step > args.pruning_steps[-1]: 
+                    scheduler.step() # don't reduce lr before finishing pruning.
                 model.zero_grad()
                 global_step += 1
 
                 if global_step % args.logging_steps == 0:
                     logger.info("Epoch: {}, global_step: {}, lr: {:.6f}, loss: {:.4f} ({:.4f}), " \
-                        "score: {:.4f} ({:.4f}), l1 loss: self {:.4f} ({}), inter {:.4f} ({})".format(epoch, global_step, 
-                        optimizer.param_groups[0]["lr"], loss, global_loss / global_step, 
-                        batch_acc, global_acc / global_step, 
-                        l1_self_loss, l0_self_loss, l1_inter_loss, l0_inter_loss)
+                        "score: {:.4f} ({:.4f}), l1 loss: self {:.4f}, inter {:.4f}".format(epoch, global_step, 
+                        optimizer.param_groups[0]["lr"], loss, global_loss, batch_acc, global_acc, 
+                        l1_self_loss, l1_inter_loss)
                     )
 
             if (args.save_steps > 0 and global_step % args.save_steps == 0) or global_step == t_total:
@@ -642,9 +620,65 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                     with open(args.output_dir + '/eval_logs.json', 'w') as fp:
                         json.dump(log_json, fp)
 
-            if args.debug and step == 10: 
-                args.save_steps = 10
-                break
+            if global_step in args.pruning_steps:
+                logger.info("Prune the model after training {} steps".format(global_step))
+                if global_step == args.pruning_steps[0]:
+                    # the first time to prune, count the original flops and params
+                    original_flops, original_num_params = count_flops(model)
+                if global_step == args.pruning_steps[-1]:
+                    # the last time to prune, set the l1 loss coef to 0
+                    args.l1_loss_self_coef, args.l1_loss_inter_coef = 0, 0
+                    l1_self_loss, l1_inter_loss = 0, 0
+                    logger.info("The last time to prune and set l1 loss coef to 0.")
+
+                if args.evaluate_during_training:
+                    # evaluate the model before pruning
+                    logger.info("Evaluate the model before pruning:")
+                    eval_score = evaluate(args, model, eval_dataset, prefix="original model")
+                
+                prune(args, model, logger)
+
+                if args.evaluate_during_training:
+                    # evaluate the model after pruning
+                    logger.info("Evaluate the model after pruning:")
+                    eval_score = evaluate(args, model, eval_dataset, prefix="pruned model")
+                
+                pruned_flops, pruned_num_params = count_flops(model)
+                logger.info(
+                    "Pruning: original num of params: %.2f, after pruning %.2f (%.1f percents)",
+                    original_num_params,
+                    pruned_num_params,
+                    pruned_num_params / original_num_params * 100,
+                )
+                logger.info(
+                    "Pruning: original FLOPS: %.2f, after pruning %.2f (%.1f percents)",
+                    original_flops,
+                    pruned_flops,
+                    pruned_flops / original_flops * 100,
+                )
+
+                saved_info['params'] = pruned_num_params
+                saved_info['flops'] = pruned_flops
+                saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
+                saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
+                best_score = 0
+
+                # reset optimizer
+                logger.info("Resetting optimizer after pruning.")
+                optimizer_grouped_parameters = [
+                    {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
+                    {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+                    ]
+                optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+
+                if args.scheduler == "constant":
+                    scheduler = WarmupConstantSchedule(optimizer, warmup_steps=args.warmup_steps)
+                elif args.scheduler == "linear":
+                    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total-global_step)
+
+            # if args.debug and step == 10: 
+            #     args.save_steps = 10
+            #     break
 
         t_end = time.time()
         logger.info("Progress: {}%, Time: {:.2f}".format(100*(epoch + 1) // args.num_train_epochs, t_end - t_start))
@@ -653,7 +687,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     logger.info("Saving the best checkpoint at epoch {}, global_step {}.".format(best_model['epoch'], best_model['global_step']))
     save_checkpoint(best_model['model'], tokenizer, args, model_name='best')
 
-    return global_step, global_loss / global_step, best_score
+    return global_step, global_loss, best_score
 
 
 def evaluate(args, model, eval_dataset=None, prefix=""):
@@ -845,22 +879,6 @@ def target_tensor(len, labels, scores):
 
     return target
 
-from thop import profile
-from copy import deepcopy
-def calculate_flops(model):
-    batch_size, n_img_tokens, n_txt_tokens = 1, 50, 35
-    input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
-    img_feat = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
-    attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, dtype=torch.int64)
-    masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)
-    is_training = False
-    inputs = (input_ids, None, attention_mask, None, None, None, img_feat)
-    model = deepcopy(model)
-    model.to('cpu')
-    flops, params = profile(model, inputs) # one mul-add is counted as 1 flop
-    flops = round(flops / 1e9, 2)
-    return flops
-
 def main():
     parser = argparse.ArgumentParser()
 
@@ -933,7 +951,7 @@ def main():
     parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument('--logging_steps', type=int, default=20, help="Log every X updates steps.")
+    parser.add_argument('--logging_steps', type=int, default=100, help="Log every X updates steps.")
     parser.add_argument('--save_steps', type=int, default=5000, help="Save checkpoint every X updates steps.")
     parser.add_argument('--save_epoch', type=int, default=1, help="Save checkpoint every X epochs.")
     parser.add_argument('--save_after_epoch', type=int, default=-1, help="Save checkpoint after epoch.")
@@ -964,9 +982,9 @@ def main():
     parser.add_argument("--l1_loss_self_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
     parser.add_argument("--l1_loss_inter_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
 
-    parser.add_argument("--prune_before_train", action='store_true', help="prune the model before training.")
-    parser.add_argument("--slimming_coef_step", default=0, type=int, help="the training step used for pruning.")
-    parser.add_argument("--inter_pruning_method", default="global", type=str, help="the method used to prune intermediate layers.")
+    parser.add_argument("--prune_before_train", action='store_true', help="Deprecated.")
+    parser.add_argument("--pruning_steps", default='', type=str, help="a list of training steps when to prune, separated by comma, eg: 1e3,2e3,3e3.")
+    parser.add_argument("--inter_pruning_method", default="layerwise", type=str, help="the method used to prune intermediate layers.")
     parser.add_argument("--self_pruning_method", default="layerwise", type=str, help="the method used to prune self attention heads.")
     parser.add_argument("--inter_pruning_ratio", default=0., type=float, help="pruning ratio for intermediate layers.")
     parser.add_argument("--self_pruning_ratio", default=0., type=float, help="pruning ratio for self attentions.")
@@ -974,6 +992,7 @@ def main():
     parser.add_argument("--pruning_strategy", default="small", type=str, help="The pruning strategy based on the coefficients: [large, random, small])")
 
     args = parser.parse_args()
+    global saved_info
     saved_info = {'config': vars(args).copy()}
 
     output_dir = args.output_dir
@@ -983,6 +1002,7 @@ def main():
 
     args.l1_loss_self_coef = args.l1_loss_self_coef or args.l1_loss_coef
     args.l1_loss_inter_coef = args.l1_loss_inter_coef or args.l1_loss_coef
+    args.pruning_steps = list(map(float, args.pruning_steps.split(',')))
 
     if args.philly:  # use philly
         logger.info('Info: Use Philly, all the output folders are reset.')
@@ -1086,77 +1106,6 @@ def main():
     if args.do_train:
         #train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, evaluate=False)
         train_dataset = VQADataset(args, 'train', tokenizer) if not args.debug else eval_dataset
-
-        if args.prune_before_train:
-            # evaluate the model before pruning
-            logger.info("Evaluate the mode before pruning:")
-            eval_score = evaluate(args, model, eval_dataset, prefix="original model")
-
-            original_flops = calculate_flops(model)
-            original_num_params = sum(p.numel() for p in model.parameters())
-            # perform the intermediate layer pruning based on the slimming coef
-            bert_layers = []
-            for m in model.modules():
-                if isinstance(m, BertLayer):
-                    bert_layers.append(m)
-
-            slimming_coefs = np.array([m.slimming_coef.detach().cpu().numpy().reshape(-1) for m in bert_layers])
-            if args.pruning_strategy == 'random':
-                slimming_coefs = np.random.rand(*slimming_coefs.shape)
-            elif args.pruning_strategy == 'large':
-                slimming_coefs = -slimming_coefs
-            quantile_axis = -1 if args.inter_pruning_method == 'layerwise' else None
-            threshold = np.quantile(slimming_coefs, args.inter_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
-            layers_masks = slimming_coefs > threshold
-            # layers_masks = get_pruning_mask(slimming_coefs, training_args.inter_pruning_ratio, training_args.inter_pruning_method)
-            for m, mask in zip(bert_layers, layers_masks):
-                pruned_inter_neurons = [i for i in range(config.intermediate_size) if mask[i] == 0]
-                logger.info('{} neurons are pruned'.format(len(pruned_inter_neurons)))
-                m.prune_inter_neurons(pruned_inter_neurons)
-
-            # perform the self-attention head pruning based on the slimming coef
-            attention_modules = []
-            for m in model.modules():
-                if isinstance(m, BertAttention):
-                    attention_modules.append(m)
-            slimming_coefs = np.array([m.self.slimming_coef.detach().cpu().numpy().reshape(-1) for m in attention_modules])
-            if args.pruning_strategy == 'random':
-                slimming_coefs = np.random.rand(*slimming_coefs.shape)
-            elif args.pruning_strategy == 'large':
-                slimming_coefs = -slimming_coefs
-            quantile_axis = -1 if args.self_pruning_method == 'layerwise' else None
-            threshold = np.quantile(slimming_coefs, args.self_pruning_ratio or args.pruning_ratio, axis=quantile_axis, keepdims=True)
-            layers_masks = slimming_coefs > threshold
-            for m, mask in zip(attention_modules, layers_masks):
-                # pruned_heads = [i for i in range(len(attention_modules)) if mask[i] == 0]
-                pruned_heads = [i for i in range(len(mask)) if mask[i] == 0]
-                logger.info('pruned heads: {}'.format(str(pruned_heads)))
-                m.prune_heads(pruned_heads)
-
-            pruned_flops = calculate_flops(model)
-            pruned_num_params = sum(p.numel() for p in model.parameters())
-            logger.info(
-                "Pruning: original num of params: %.2e, after pruning %.2e (%.1f percents)",
-                original_num_params,
-                pruned_num_params,
-                pruned_num_params / original_num_params * 100,
-            )
-            logger.info(
-                "Pruning: original FLOPS: %.2f, after pruning %.2f (%.1f percents)",
-                original_flops,
-                pruned_flops,
-                pruned_flops / original_flops * 100,
-            )
-            saved_info['params'] = round(pruned_num_params / 1e6, 2)
-            saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
-            saved_info['flops'] = pruned_flops
-            saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
-
-            # save and evaluate the pruned model
-            logger.info("Evaluate the mode after pruning:")
-            checkpoint_dir = save_checkpoint(model, tokenizer, args, 0, 0) 
-            eval_score = evaluate(args, model, eval_dataset, prefix="pruned model")
-
         tic = time.time()
         global_step, tr_loss, best_score = train(args, train_dataset, eval_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s, best score = %s", global_step, tr_loss, best_score)

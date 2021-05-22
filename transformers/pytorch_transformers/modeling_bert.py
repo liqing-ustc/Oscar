@@ -281,23 +281,13 @@ class BertSelfAttention(nn.Module):
                 "heads (%d)" % (config.hidden_size, config.num_attention_heads))
         self.output_attentions = config.output_attentions
 
-        self.self_slimming = getattr(config, 'self_slimming', False)
-        self.pruning_ratio = getattr(config, 'pruning_ratio', 0.0)
-
-        self.num_attention_heads = round(config.num_attention_heads * (1 - self.pruning_ratio))
-        self.all_head_size = round(config.hidden_size * (1 - self.pruning_ratio))
-        self.attention_head_size = int(self.all_head_size / self.num_attention_heads)
-        # self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        # self.all_head_size = int(self.num_attention_heads * self.attention_head_size * (1 - self.pruning_ratio))
+        self.num_attention_heads = config.num_attention_heads
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
 
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
-
-        if self.self_slimming:
-            self.slimming_coef = nn.Parameter(
-                torch.ones(self.num_attention_heads).reshape(1,-1,1,1) * 1.0
-            )
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
@@ -328,11 +318,6 @@ class BertSelfAttention(nn.Module):
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
         
-        # if network slimming is applied on the self-attention heads
-        # ipdb.set_trace(context=5)
-        if self.self_slimming:
-            attention_probs *= self.slimming_coef
-
         # Mask heads if we want to
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
@@ -349,12 +334,8 @@ class BertSelfAttention(nn.Module):
 
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
-        super().__init__()
-        self.pruning_ratio = getattr(config, 'pruning_ratio', 0.0)
-        self.all_head_size = round(config.hidden_size * (1 - self.pruning_ratio))
-
-        self.dense = nn.Linear(self.all_head_size, config.hidden_size)
-        # self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        super(BertSelfOutput, self).__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -371,24 +352,25 @@ class BertAttention(nn.Module):
         self.self_slimming = getattr(config, 'self_slimming', False)
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
-        self.pruned_heads = set()
 
-    def prune_heads(self, heads):
+        if self.self_slimming:
+            self.slimming_coef = nn.Parameter(
+                torch.ones(config.num_attention_heads).reshape(1,1,-1) * 1.0)
+
+    def prune(self, heads):
+        # prune attention heads
         if len(heads) == 0:
             return
         mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
-        heads = set(heads) - self.pruned_heads  # Convert to set and remove already pruned heads
-        if self.self.self_slimming:
+        if self.self_slimming:
             slimming_mask = torch.ones(self.self.num_attention_heads)
         for head in heads:
-            # Compute how many pruned heads are before the head and move the index accordingly
-            head = head - sum(1 if h < head else 0 for h in self.pruned_heads)
             mask[head] = 0
-            if self.self.self_slimming:
+            if self.self_slimming:
                 slimming_mask[head] = 0
         mask = mask.view(-1).contiguous().eq(1)
         index = torch.arange(len(mask))[mask].long()
-        if self.self.self_slimming:
+        if self.self_slimming:
             slimming_mask = slimming_mask.view(-1).contiguous().eq(1)
             slimming_index = torch.arange(len(slimming_mask))[slimming_mask].long()
 
@@ -401,24 +383,18 @@ class BertAttention(nn.Module):
         # Update hyper params and store pruned heads
         self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
         self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
-        self.pruned_heads = self.pruned_heads.union(heads)
 
-        if self.self.self_slimming:
-            # new_slimming_coef = nn.Parameter(
-            #     torch.ones(1, self.self.num_attention_heads, 1, 1) * 1.0
-            # ).to(self.self.slimming_coef.device)
-            slimming_index = slimming_index.to(self.self.slimming_coef.device)
-            new_data = self.self.slimming_coef.data.index_select(1, slimming_index).clone().detach()
-            # new_slimming_coef.requires_grad = False
-            # new_slimming_coef.data.copy_(new_data)
-            # new_slimming_coef.requires_grad = True
+        if self.self_slimming:
+            slimming_index = slimming_index.to(self.slimming_coef.device)
+            new_data = self.slimming_coef.data.index_select(2, slimming_index).clone().detach()
             with torch.no_grad():
-                self.self.slimming_coef = nn.Parameter(new_data)
-            # self.self.slimming_coef = self.self.slimming_coef[:,index,:,:]
-			
+                self.slimming_coef = nn.Parameter(new_data)
 			
     def forward(self, input_tensor, attention_mask, head_mask=None):
         self_outputs = self.self(input_tensor, attention_mask, head_mask)
+        if self.self_slimming:
+            self_outputs = (self_outputs[0] * self.slimming_coef.repeat_interleave(self.self.attention_head_size, dim=-1),) \
+                            + self_outputs[1:]
         attention_output = self.output(self_outputs[0], input_tensor)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
@@ -465,38 +441,22 @@ class BertLayer(nn.Module):
             self.slimming_coef = nn.Parameter(
                 torch.ones(self.intermediate.dense.out_features).reshape(1,-1) * 1.0
             )
-        self.pruned_inter_neurons = set()
 
-    def prune_inter_neurons(self, neurons):
+    def prune(self, neurons):
+        # prune the neurons in the intermediate layer
         if len(neurons) == 0:
             return
-        mask = torch.ones(self.intermediate.dense.out_features)
-        neurons = set(neurons) - self.pruned_inter_neurons  # Convert to set and remove already pruned neurons
-        if self.inter_slimming:
-            slimming_mask = torch.ones(self.intermediate.dense.out_features)
-        for neuron in neurons:
-            # Compute how many pruned neurons are before the neuron and move the index accordingly
-            neuron = neuron - sum(1 if n < neuron else 0 for n in self.pruned_inter_neurons)
-            mask[neuron] = 0
-            if self.inter_slimming:
-                slimming_mask[neuron] = 0
-        mask = mask.view(-1).contiguous().eq(1)
-        index = torch.arange(len(mask))[mask].long()
-        if self.inter_slimming:
-            slimming_mask = slimming_mask.view(-1).contiguous().eq(1)
-            slimming_index = torch.arange(len(slimming_mask))[slimming_mask].long()
+        index = [i for i in range(self.intermediate.dense.out_features) if i not in neurons]
+        index = torch.LongTensor(index)
 
         # Prune linear layers
         self.intermediate.dense = prune_linear_layer(self.intermediate.dense, index)
         self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
 
-        # Update hyper params and store pruned neurons
-        self.pruned_inter_neurons = self.pruned_inter_neurons.union(neurons)
-
         # Prune slimming coefficients
         if self.inter_slimming:
-            slimming_index = slimming_index.to(self.slimming_coef.device)
-            new_data = self.slimming_coef.data.index_select(1, slimming_index).clone().detach()
+            index = index.to(self.slimming_coef.device)
+            new_data = self.slimming_coef.data.index_select(1, index).clone().detach()
             with torch.no_grad():
                 self.slimming_coef = nn.Parameter(new_data)
                 

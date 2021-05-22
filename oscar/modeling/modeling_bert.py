@@ -56,11 +56,6 @@ class CaptionBertSelfAttention(BertSelfAttention):
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
 
-        # if network slimming is applied on the self-attention heads
-        # ipdb.set_trace(context=5)
-        if self.self_slimming:
-            attention_probs *= self.slimming_coef
-            
         # Mask heads if we want to
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
@@ -87,6 +82,9 @@ class CaptionBertAttention(BertAttention):
     def forward(self, input_tensor, attention_mask, head_mask=None,
             history_state=None):
         self_outputs = self.self(input_tensor, attention_mask, head_mask, history_state)
+        if self.self_slimming:
+            self_outputs = (self_outputs[0] * self.slimming_coef.repeat_interleave(self.self.attention_head_size, dim=-1),) \
+                            + self_outputs[1:]
         attention_output = self.output(self_outputs[0], input_tensor)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
