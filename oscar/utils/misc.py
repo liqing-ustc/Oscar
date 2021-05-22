@@ -64,6 +64,20 @@ def get_world_size():
     if not dist.is_initialized():
         return 1
     return dist.get_world_size()
+    
+def synchronize():
+    """
+    Helper function to synchronize (barrier) among all processes when
+    using distributed training
+    """
+    if not dist.is_available():
+        return
+    if not dist.is_initialized():
+        return
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return
+    dist.barrier()
 
 def save_checkpoint(model, tokenizer, args, epoch=0, iteration=0, num_trial=10, model_name=None):
     model_name = model_name or 'checkpoint-{}-{}'.format(epoch, iteration)

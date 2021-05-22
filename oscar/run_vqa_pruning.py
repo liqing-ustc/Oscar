@@ -25,7 +25,7 @@ from transformers.pytorch_transformers import WEIGHTS_NAME, BertTokenizer, BertC
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
 
 from oscar.utils.logger import setup_logger
-from oscar.utils.misc import set_seed, mkdir, save_checkpoint
+from oscar.utils.misc import set_seed, mkdir, save_checkpoint, synchronize
 from oscar.utils.task_utils import (_truncate_seq_pair, convert_examples_to_features_vqa,
                         output_modes, processors)
 from oscar.utils.pruning import prune, count_flops, calculate_l1_loss
@@ -636,7 +636,9 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                     logger.info("Evaluate the model before pruning:")
                     eval_score = evaluate(args, model, eval_dataset, prefix="original model")
                 
+                synchronize()
                 prune(args, model, logger)
+                synchronize()
 
                 if args.evaluate_during_training:
                     # evaluate the model after pruning
