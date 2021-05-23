@@ -62,10 +62,10 @@ elif task == 'vqa':
 
     job_cmd = "oscar/run_vqa_pruning.py \
         --do_train --do_lower_case \
-        --evaluate_during_training --save_steps 1000 \
+        --evaluate_during_training --save_steps 100 \
         --self_slimming --inter_slimming \
-        --l1_loss_coef 1e-4 --pruning_steps 1e3\
-        --pruning_strategy small --pruning_ratio 0.8 --seed 0\
+        --l1_loss_coef 1e-4 --pruning_steps 10 \
+        --pruning_strategy random --pruning_ratio 0.8 --seed 0\
     "
 
 

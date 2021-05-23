@@ -25,7 +25,7 @@ from transformers.pytorch_transformers import WEIGHTS_NAME, BertTokenizer, BertC
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
 
 from oscar.utils.logger import setup_logger
-from oscar.utils.misc import set_seed, mkdir, save_checkpoint, synchronize
+from oscar.utils.misc import set_seed, mkdir, save_checkpoint, synchronize, prepare_model_optimizer
 from oscar.utils.task_utils import (_truncate_seq_pair, convert_examples_to_features_vqa,
                         output_modes, processors)
 from oscar.utils.pruning import prune, count_flops, calculate_l1_loss
@@ -487,21 +487,8 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     elif args.scheduler == "linear":
         scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
 
-    if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
-
-    # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
-
-    # Distributed training (should be after apex fp16 initialization)
-    if args.local_rank != -1:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
-
+    model, optimizer = prepare_model_optimizer(args, model, optimizer)
+    
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
@@ -636,9 +623,21 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                     logger.info("Evaluate the model before pruning:")
                     eval_score = evaluate(args, model, eval_dataset, prefix="original model")
                 
-                synchronize()
-                prune(args, model, logger)
-                synchronize()
+                model = prune(args, model, logger)
+                # reset optimizer
+                logger.info("Resetting optimizer after pruning.")
+                optimizer_grouped_parameters = [
+                    {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
+                    {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+                    ]
+                optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+
+                if args.scheduler == "constant":
+                    scheduler = WarmupConstantSchedule(optimizer, warmup_steps=args.warmup_steps)
+                elif args.scheduler == "linear":
+                    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total-global_step)
+                
+                model, optimizer = prepare_model_optimizer(args, model, optimizer)
 
                 if args.evaluate_during_training:
                     # evaluate the model after pruning
@@ -664,19 +663,6 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                 saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
                 saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
                 best_score = 0
-
-                # reset optimizer
-                logger.info("Resetting optimizer after pruning.")
-                optimizer_grouped_parameters = [
-                    {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
-                    {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-                    ]
-                optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-
-                if args.scheduler == "constant":
-                    scheduler = WarmupConstantSchedule(optimizer, warmup_steps=args.warmup_steps)
-                elif args.scheduler == "linear":
-                    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total-global_step)
 
             # if args.debug and step == 10: 
             #     args.save_steps = 10
@@ -742,7 +728,7 @@ def evaluate(args, model, eval_dataset=None, prefix=""):
 
     score = score / num_data
     upper_bound = upper_bound / num_data
-    logger.info("Eval Score: %.3f (<= %.3f)" % (100*score, 100*upper_bound))
+    logger.warning("Eval Score: %.3f (<= %.3f)" % (100*score, 100*upper_bound))
 
     return score
 
@@ -1004,7 +990,7 @@ def main():
 
     args.l1_loss_self_coef = args.l1_loss_self_coef or args.l1_loss_coef
     args.l1_loss_inter_coef = args.l1_loss_inter_coef or args.l1_loss_coef
-    args.pruning_steps = list(map(float, args.pruning_steps.split(',')))
+    args.pruning_steps = list(map(float, args.pruning_steps.split(','))) if args.pruning_steps else []
 
     if args.philly:  # use philly
         logger.info('Info: Use Philly, all the output folders are reset.')
@@ -1020,6 +1006,7 @@ def main():
         device = torch.device("cuda", args.local_rank)
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
+        args.distributed = True
     args.device = device
 
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",

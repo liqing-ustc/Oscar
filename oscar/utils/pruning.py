@@ -38,6 +38,8 @@ def prune(args, model, logger=None, prune_types=['inter', 'self']):
             if logger: logger.warning('Pruning {}: {}, {}'.format(tp, len(prune_indice), prune_indice[:10]))
             m.prune(prune_indice)
 
+    return model
+
 def calculate_l1_loss(model, tp):
     assert tp in ['inter', 'self']
     layer = BertLayer if tp == 'inter' else BertAttention
