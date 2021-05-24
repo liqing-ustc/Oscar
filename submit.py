@@ -11,8 +11,8 @@ stamp = ''
 if not stamp:
     stamp = datetime.now().strftime('%Y%m%d.%H%M%S')
 
-task = 'vqa'
-output_dir = 't-lqing/output/oscar.{}'.format(stamp)
+task = 'pretrain'
+output_dir = 't-lqing/output/{}/oscar.{}'.format(task, stamp)
 submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num_nodes 1 --exp_name liqing-{} " \
              "--config_yaml ~/.azureml/{}.yaml --cmd \"{}\""
 
@@ -68,6 +68,21 @@ elif task == 'vqa':
         --pruning_strategy random --pruning_ratio 0.8 --seed 0\
     "
 
+elif task == 'pretrain':
+    job_cmd = 'oscar/run_oscarplus_pretrain.py \
+        --use_b 1 \
+        --max_grad_norm 10.0 --gradient_accumulation_steps 1 \
+        --use_img_layernorm 1 \
+        --output_dir output/pretrain/ \
+        --bert_model bert --model_name_or_path bert-base-uncased \
+        --do_lower_case  --drop_out 0.1 \
+        --warmup_steps 0 --do_train --max_seq_length 35 --on_memory \
+        --max_img_seq_length 50 --img_feature_dim 2054 \
+        --train_batch_size 1024 --learning_rate 1e-4 \
+        --ckpt_period 10000 --max_iters 1000000 --log_period 100 \
+        --data_dir data/ --dataset_file vinvl/pretrain_corpus/coco_flickr30k_googlecc_gqa_sbu_oi_x152c4big2exp168.yaml \
+        --textb_sample_mode 1 --texta_false_prob 0.25 \
+    '
 
 resolved_submit_cmd = submit_cmd.format(output_dir, task, ws_config, job_cmd)
 print(resolved_submit_cmd)

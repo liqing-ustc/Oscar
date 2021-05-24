@@ -500,7 +500,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
     logger.info("  Total optimization steps = %d", t_total)
 
     global_step, global_loss, global_acc = 0, 0.0, 0.0
-    l1_self_loss, l0_self_loss, l1_inter_loss, l0_inter_loss = 0., 0., 0., 0.
+    l1_self_loss, l1_inter_loss = 0., 0.
     model.zero_grad()
     #train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args.seed, args.n_gpu)  # Added here for reproductibility (even between python 2 and 3)
@@ -1102,7 +1102,8 @@ def main():
         logger.info(" global_step = %s, average loss = %s, best score = %s", global_step, tr_loss, best_score)
         saved_info['train_time'] = round((time.time() - tic) / 3600.0, 2)
         saved_info['best_score'] = round(best_score * 100, 2)
-        json.dump(saved_info, open(op.join(args.output_dir, 'saved_info.json'), 'w'))
+        if args.local_rank in [-1, 0]:
+            json.dump(saved_info, open(op.join(args.output_dir, 'saved_info.json'), 'w'))
 
     # Training on train+val
     if args.do_train_val:

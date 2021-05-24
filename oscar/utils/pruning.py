@@ -5,6 +5,23 @@ import numpy as np
 import torch
 from transformers.pytorch_transformers.modeling_bert import BertLayer, BertAttention
 
+def pruning_options(parser):
+    # for pruning
+    parser.add_argument("--self_slimming", action='store_true', help="slimming self-attention heads in multi-head attention.")
+    parser.add_argument("--inter_slimming", action='store_true', help="slimming intermediate layer in multi-head attention.")
+    parser.add_argument("--l1_loss_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
+    parser.add_argument("--l1_loss_self_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
+    parser.add_argument("--l1_loss_inter_coef", default=0., type=float, help="Coefficient for the l1 loss regularization in network")
+
+    parser.add_argument("--prune_before_train", action='store_true', help="Deprecated.")
+    parser.add_argument("--pruning_steps", default='', type=str, help="a list of training steps when to prune, separated by comma, eg: 1e3,2e3,3e3.")
+    parser.add_argument("--inter_pruning_method", default="layerwise", type=str, help="the method used to prune intermediate layers.")
+    parser.add_argument("--self_pruning_method", default="layerwise", type=str, help="the method used to prune self attention heads.")
+    parser.add_argument("--inter_pruning_ratio", default=0., type=float, help="pruning ratio for intermediate layers.")
+    parser.add_argument("--self_pruning_ratio", default=0., type=float, help="pruning ratio for self attentions.")
+    parser.add_argument("--pruning_ratio", default=0., type=float, help="pruning ratio for both self attentions and intermediate layers.")
+    parser.add_argument("--pruning_strategy", default="small", type=str, help="The pruning strategy based on the coefficients: [large, random, small])")
+
 def prune(args, model, logger=None, prune_types=['inter', 'self']):
     if hasattr(model, 'module'): model = model.module
     
