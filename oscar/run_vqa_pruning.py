@@ -997,6 +997,7 @@ def main():
         args.output_dir = os.path.join(os.getenv('PT_OUTPUT_DIR'), args.output_dir)
         logger.info('OUTPUT_DIR:', args.output_dir)
 
+    args.distributed = False
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -1075,6 +1076,7 @@ def main():
         elif args.code_level == 'bottom':
             model.init_code_embedding(train_code['embeddings_b'].t())
 
+    args.config = config
     if args.local_rank == 0:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 

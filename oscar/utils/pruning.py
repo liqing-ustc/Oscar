@@ -11,10 +11,12 @@ def prune(args, model, logger=None, prune_types=['inter', 'self']):
     for tp in prune_types:
         if tp == 'inter':
             pruning_ratio = args.inter_pruning_ratio or args.pruning_ratio
+            pruning_ratio = int(args.config.intermediate_size * pruning_ratio)
             pruning_method = args.inter_pruning_method
             layer_type = BertLayer
         elif tp == 'self':
             pruning_ratio = args.self_pruning_ratio or args.pruning_ratio
+            pruning_ratio = int(args.config.num_attention_heads * pruning_ratio)
             pruning_method = args.self_pruning_method
             layer_type = BertAttention
 
@@ -27,14 +29,16 @@ def prune(args, model, logger=None, prune_types=['inter', 'self']):
             slimming_coefs = [-coef for coef in slimming_coefs]
         
         if pruning_method == 'global':
-            threshold = np.quantile(np.concatenate(slimming_coefs), pruning_ratio)
+            # threshold = np.quantile(np.concatenate(slimming_coefs), pruning_ratio)
+            threshold = np.sort(np.concatenate(slimming_coefs))[pruning_ratio]
             threshold = [threshold] * len(slimming_coefs)
         elif pruning_method == 'layerwise':
-            threshold = [np.quantile(coef, pruning_ratio) for coef in slimming_coefs]
+            # threshold = [np.quantile(coef, pruning_ratio) for coef in slimming_coefs]
+            threshold = [np.sort(coef)[pruning_ratio] for coef in slimming_coefs]
         else: assert False
 
         for m, coef, thre in zip(layers, slimming_coefs, threshold):
-            prune_indice = np.where(coef <= thre)[0]
+            prune_indice = np.where(coef < thre)[0]
             if logger: logger.warning('Pruning {}: {}, {}'.format(tp, len(prune_indice), prune_indice[:10]))
             m.prune(prune_indice)
 
