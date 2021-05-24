@@ -34,11 +34,11 @@ def prune(args, model, logger=None, prune_types=['inter', 'self']):
             threshold = [threshold] * len(slimming_coefs)
         elif pruning_method == 'layerwise':
             # threshold = [np.quantile(coef, pruning_ratio) for coef in slimming_coefs]
-            threshold = [np.sort(coef)[pruning_ratio] for coef in slimming_coefs]
+            threshold = [np.sort(coef)[min(pruning_ratio, len(coef) - 2)] for coef in slimming_coefs]
         else: assert False
 
         for m, coef, thre in zip(layers, slimming_coefs, threshold):
-            prune_indice = np.where(coef < thre)[0]
+            prune_indice = np.where(coef <= thre)[0]
             if logger: logger.warning('Pruning {}: {}, {}'.format(tp, len(prune_indice), prune_indice[:10]))
             m.prune(prune_indice)
 
