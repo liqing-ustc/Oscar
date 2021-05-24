@@ -92,7 +92,7 @@ class OscarTSVDataset(Dataset):
             self.imgid2labels = {}
             self.corpus_lines = 0
             max_tokens = 0
-            for line_no in tqdm(range(len(self.corpus_tsvfile))):
+            for line_no in range(len(self.corpus_tsvfile)):
                 doc = []
                 row = self.corpus_tsvfile.seek(line_no)
                 img_info = row[0].split('_')

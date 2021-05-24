@@ -25,6 +25,7 @@ from oscar.datasets.build import make_data_loader
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule
 from oscar.utils.misc import mkdir, get_rank
 from oscar.utils.metric_logger import TensorboardLogger
+from oscar.utils.logger import setup_logger
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,7 @@ def main():
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
 
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
-        logger.info("Output Directory Exists.")
+        logging.info("Output Directory Exists.")
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
@@ -180,9 +181,11 @@ def main():
 
     # Setup logging
     logging.basicConfig(
-        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-        datefmt='%m/%d/%Y %H:%M:%S',
+        format='%(asctime)s %(name)s %(levelname)s: %(message)s',
         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+    mkdir(args.output_dir)
+    global logger
+    logger = setup_logger("pretrain", args.output_dir, args.local_rank)
     logger.warning(
         "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s",
         args.local_rank, device, args.n_gpu, bool(args.local_rank != -1)
@@ -203,8 +206,6 @@ def main():
         raise ValueError(
             "Training is currently the only implemented execution option. Please set `do_train`.")
 
-    if not os.path.exists(args.output_dir):
-        mkdir(args.output_dir)
 
     last_checkpoint_dir = None
     arguments = {"iteration": 0}
