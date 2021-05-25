@@ -74,11 +74,11 @@ def count_flops(model):
     if hasattr(model, 'module'): model = model.module
     batch_size, n_img_tokens, n_txt_tokens = 1, 50, 35
     input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
-    img_feat = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
+    img_feats = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
     attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, dtype=torch.int64)
     masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)
     is_training = False
-    inputs = (input_ids, None, attention_mask, None, None, None, img_feat)
+    inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'img_feats': img_feats}
     model = deepcopy(model)
     model.to('cpu')
     flops, params = profile(model, inputs, verbose=False) # one mul-add is counted as 1 flop
