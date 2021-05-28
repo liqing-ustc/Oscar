@@ -97,7 +97,7 @@ def save_checkpoint(model, tokenizer, args, epoch=0, iteration=0, num_trial=10, 
     return checkpoint_dir
 
 def prepare_model_optimizer(args, model, optimizer):
-    if args.fp16:
+    if hasattr(args, 'fp16') and args.fp16:
         try:
             from apex import amp
         except ImportError:

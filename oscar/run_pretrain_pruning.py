@@ -263,6 +263,8 @@ def main():
         args.num_contrast_classes = 2
     config.num_contrast_classes = args.num_contrast_classes
 
+    args.config = config
+
     # Prepare model
     # model = BertForPreTraining.from_pretrained(args.bert_model)
     load_num = 0
@@ -327,12 +329,7 @@ def main():
         optimizer.load_state_dict(optimizer_to_load.pop("optimizer"))
         scheduler.load_state_dict(optimizer_to_load.pop("scheduler"))
 
-    if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank,
-            find_unused_parameters=True)
-    elif args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    model, optimizer = prepare_model_optimizer(args, model, optimizer)
 
     # train_examples = None
     train_dataloaders = make_data_loader(
@@ -501,7 +498,7 @@ def main():
                         eta=eta_string,
                         iter=step + 1,
                         memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
-                    ) + "\n    " + meters.get_logs(step + 1) + \
+                    ) + "\n    " + meters.get_logs(step + 1) \
                     + "\n    " + "l1 loss: self {:.4f}, inter {:.4f}".format(l1_self_loss, l1_inter_loss)
                 )
 

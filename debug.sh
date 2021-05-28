@@ -30,7 +30,7 @@
 #     --do_train --do_lower_case --evaluate_during_training --debug 
 
 # python -m torch.distributed.launch --nproc_per_node=1 oscar/run_oscarplus_pretrain.py \
-python oscar/run_oscarplus_pretrain.py \
+python oscar/run_pretrain_pruning.py \
     --use_b 1 \
     --max_grad_norm 10.0 --gradient_accumulation_steps 1 \
     --use_img_layernorm 1 \
@@ -42,4 +42,9 @@ python oscar/run_oscarplus_pretrain.py \
     --drop_out 0.1 --train_batch_size 8 \
     --ckpt_period 10000 --max_iters 2000000 --log_period 100 \
     --data_dir data/ --dataset_file vinvl/pretrain_corpus/coco_flickr30k_googlecc_gqa_sbu_oi_x152c4big2exp168.yaml \
-    --textb_sample_mode 1 --texta_false_prob 0.25 
+    --textb_sample_mode 1 --texta_false_prob 0.25 \
+    --self_slimming \
+    --inter_slimming \
+    --pruning_ratio=0.2 \
+    --l1_loss_coef=1e-4 \
+    --pruning_steps=100,200,300
