@@ -29,8 +29,8 @@
 #     --pruning_ratio=0.2 --l1_loss_coef=1e-4 --pruning_steps=100,200,300 \
 #     --do_train --do_lower_case --evaluate_during_training --debug 
 
-# python -m torch.distributed.launch --nproc_per_node=1 oscar/run_oscarplus_pretrain.py \
-python oscar/run_pretrain_pruning.py \
+# python oscar/run_pretrain_pruning.py \
+python -m torch.distributed.launch --nproc_per_node=1 oscar/run_pretrain_pruning.py \
     --use_b 1 \
     --max_grad_norm 10.0 --gradient_accumulation_steps 1 \
     --use_img_layernorm 1 \

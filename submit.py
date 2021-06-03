@@ -71,8 +71,9 @@ elif task == 'vqa':
     "
 
 elif task == 'pretrain':
-    num_nodes = 4
-    train_batch_size = int(1024 * num_nodes)
+    num_nodes = 2
+    train_batch_size_per_node = 1024
+    train_batch_size = int(train_batch_size_per_node * num_nodes)
     max_iters = int(1e6 * 1024 // train_batch_size)
     job_cmd = 'oscar/run_pretrain_pruning.py \
         --use_b 1 \

@@ -187,6 +187,13 @@ def main():
         torch.distributed.init_process_group(
             backend='nccl', init_method="env://"
         )
+        for key in ['RANK', 'WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT']:
+            if key in os.environ:
+                print(key, os.environ[key])
+            else:
+                print(key, 'not in os.environ.')
+        print(args.local_rank, torch.distributed.get_backend(), torch.distributed.get_rank(), torch.distributed.get_world_size())
+        torch.distributed.barrier()
         args.n_gpu = 1
     args.device = device
 
@@ -620,7 +627,7 @@ def main():
 
     saved_info['train_time'] = round(total_training_time / 3600.0, 2)
     if args.local_rank in [-1, 0]:
-        json.dump(saved_info, open(op.join(args.output_dir, 'saved_info.json'), 'w'))
+        json.dump(saved_info, open(os.path.join(args.output_dir, 'saved_info.json'), 'w'))
 
 
 if __name__ == "__main__":
