@@ -6,6 +6,7 @@ scikit-image
 anytree
 regex
 boto3
+tensorboardX
 git+https://github.com/liqing-ustc/pytorch-OpCounter.git
 torch==1.6.0 
 torchvision==0.7.0
