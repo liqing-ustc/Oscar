@@ -484,6 +484,11 @@ class PreTrainedModel(nn.Module):
             local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
             module._load_from_state_dict(
                 state_dict, prefix, local_metadata, True, missing_keys, unexpected_keys, error_msgs)
+            if len(error_msgs) > 0 and all(e.startswith('size mismatch') for e in error_msgs):
+                module.weight = nn.Parameter(state_dict[prefix+'weight'])
+                module.bias = nn.Parameter(state_dict[prefix+'bias'])
+                module.out_features, module.in_features = module.weight.shape
+                error_msgs.clear()
             for name, child in module._modules.items():
                 if child is not None:
                     load(child, prefix + name + '.')
