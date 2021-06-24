@@ -18,6 +18,7 @@ submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num
 output_dir = 't-lqing/experiments/pretrain/{}/0/vqa/checkpoint-{:07d}/'
 job_cmd = "oscar/run_vqa_pruning.py --do_train --do_lower_case \
         --evaluate_during_training --save_steps 1000 \
+        --self_slimming --inter_slimming \
         --seed 0\
         --model_name_or_path experiments/pretrain/{}/0/pretrain/checkpoint-{:07d} \
 "
