@@ -30,21 +30,39 @@
 #     --do_train --do_lower_case --evaluate_during_training --debug 
 
 # python oscar/run_pretrain_pruning.py \
-python -m torch.distributed.launch --nproc_per_node=1 oscar/run_pretrain_pruning.py \
-    --use_b 1 \
-    --max_grad_norm 10.0 --gradient_accumulation_steps 1 \
-    --use_img_layernorm 1 \
-    --output_dir output/pretrain/ \
-    --bert_model bert --model_name_or_path bert-base-uncased \
-    --do_lower_case --learning_rate 5e-05 \
-    --warmup_steps 0 --do_train --max_seq_length 35 --on_memory \
-    --max_img_seq_length 50 --img_feature_dim 2054 \
-    --drop_out 0.1 --train_batch_size 8 \
-    --ckpt_period 10000 --max_iters 2000000 --log_period 100 \
-    --data_dir data/ --dataset_file vinvl/pretrain_corpus/coco_flickr30k_googlecc_gqa_sbu_oi_x152c4big2exp168.yaml \
-    --textb_sample_mode 1 --texta_false_prob 0.25 \
-    --self_slimming \
-    --inter_slimming \
-    --pruning_ratio=0.2 \
-    --l1_loss_coef=1e-4 \
-    --pruning_steps=100,200,300
+# python -m torch.distributed.launch --nproc_per_node=1 oscar/run_pretrain_pruning.py \
+#     --use_b 1 \
+#     --max_grad_norm 10.0 --gradient_accumulation_steps 1 \
+#     --use_img_layernorm 1 \
+#     --output_dir output/pretrain/ \
+#     --bert_model bert --model_name_or_path bert-base-uncased \
+#     --do_lower_case --learning_rate 5e-05 \
+#     --warmup_steps 0 --do_train --max_seq_length 35 --on_memory \
+#     --max_img_seq_length 50 --img_feature_dim 2054 \
+#     --drop_out 0.1 --train_batch_size 8 \
+#     --ckpt_period 10000 --max_iters 2000000 --log_period 100 \
+#     --data_dir data/ --dataset_file vinvl/pretrain_corpus/coco_flickr30k_googlecc_gqa_sbu_oi_x152c4big2exp168.yaml \
+#     --textb_sample_mode 1 --texta_false_prob 0.25 \
+#     --self_slimming \
+#     --inter_slimming \
+#     --pruning_ratio=0.2 \
+#     --l1_loss_coef=1e-4 \
+#     --pruning_steps=100,200,300
+
+python oscar/run_retrieval.py \
+    --model_name_or_path datasets/coco_ir/base/checkpoint-1340000 \
+    --do_train \
+    --do_lower_case \
+    --evaluate_during_training \
+    --num_captions_per_img_val 20 \
+    --eval_caption_index_file minival_caption_indexs_top20.pt \
+    --per_gpu_train_batch_size 16 \
+    --learning_rate 0.00002 \
+    --num_train_epochs 30 \
+    --weight_decay 0.05 \
+    --save_steps 5000 \
+    --add_od_labels \
+    --od_label_type vg \
+    --max_seq_length 70 \
+    --max_img_seq_length 70 \
+    --output_dir output/
