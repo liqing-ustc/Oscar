@@ -50,7 +50,7 @@
 #     --pruning_steps=100,200,300
 
 python oscar/run_retrieval.py \
-    --model_name_or_path datasets/coco_ir/base/checkpoint-1340000 \
+    --model_name_or_path datasets/coco_ir/model/base/checkpoint-1340000 \
     --do_train \
     --do_lower_case \
     --evaluate_during_training \
