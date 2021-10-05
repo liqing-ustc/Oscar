@@ -49,6 +49,7 @@
 #     --l1_loss_coef=1e-4 \
 #     --pruning_steps=100,200,300
 
+# Image-Text Retrieval
 # python oscar/run_retrieval.py \
 #     --model_name_or_path datasets/coco_ir/model/base/checkpoint-1340000 \
 #     --do_train \
@@ -72,7 +73,7 @@ python oscar/run_retrieval.py \
     --do_eval \
     --test_split test \
     --num_captions_per_img_val 5 \
-    --eval_img_keys_file test_img_keys_1k.tsv \
+    --eval_img_keys_file test_img_keys.tsv \
     --cross_image_eval \
     --per_gpu_eval_batch_size 64 \
     --img_feat_file datasets/coco_ir/features.tsv \

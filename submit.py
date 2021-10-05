@@ -3,16 +3,16 @@ import os
 import pdb
 from datetime import datetime
 
-ws_config = 'itp_acv'
+# ws_config = 'itp_acv'
 # ws_config = 'vlp_cust' 
-# ws_config = 'vlp' 
+ws_config = 'vlp'
 # ws_config = 'objectdet_wu' 
 stamp = ''
 
 if not stamp:
     stamp = datetime.now().strftime('%Y%m%d.%H%M%S')
 
-task = 'pretrain'
+task = 'coco_ir'
 num_nodes = 1
 output_dir = 't-lqing/output/{}/oscar.{}'.format(task, stamp)
 submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num_nodes {} --exp_name liqing-{} " \
@@ -71,8 +71,8 @@ elif task == 'vqa':
     "
 
 elif task == 'coco_ir':
-    job_cmd = "oscar/run_retrieval.py \
-    --model_name_or_path datasets/coco_ir/base/checkpoint-1340000 \
+    job_cmd = "python oscar/run_retrieval.py \
+    --model_name_or_path datasets/coco_ir/model/base/checkpoint-1340000 \
     --do_train \
     --do_lower_case \
     --evaluate_during_training \
