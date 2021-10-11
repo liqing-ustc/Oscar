@@ -5,7 +5,7 @@ import argparse
 import os
 import base64
 import os.path as op
-import random, json
+import random, json, time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,7 +14,8 @@ from tqdm import tqdm
 
 from oscar.utils.tsv_file import TSVFile
 from oscar.utils.logger import setup_logger
-from oscar.utils.misc import mkdir, set_seed
+from oscar.utils.misc import mkdir, set_seed, prepare_model_optimizer
+from oscar.utils.pruning import prune, count_flops, calculate_l1_loss, pruning_options
 from oscar.modeling.modeling_bert import ImageBertForSequenceClassification
 from transformers.pytorch_transformers import BertTokenizer, BertConfig 
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
@@ -412,7 +413,55 @@ def train(args, train_dataset, val_dataset, model, tokenizer):
                                      'R10': rank_accs['R@10'], 'best_R1':best_score}
                         log_json.append(epoch_log)
                         with open(args.output_dir + '/eval_logs.json', 'w') as fp:
-                            json.dump(log_json, fp) 
+                            json.dump(log_json, fp)
+
+                if global_step in args.pruning_steps:
+                    logger.info("Prune the model after training {} steps".format(global_step))
+                    if global_step == args.pruning_steps[0]:
+                        # the first time to prune, count the original flops and params
+                        original_flops, original_num_params = count_flops(model)
+                    if global_step == args.pruning_steps[-1]:
+                        # the last time to prune, set the l1 loss coef to 0
+                        args.l1_loss_self_coef, args.l1_loss_inter_coef = 0, 0
+                        l1_self_loss, l1_inter_loss = 0, 0
+                        logger.info("The last time to prune and set l1 loss coef to 0.")
+
+                    model = prune(args, model, logger)
+                    # reset optimizer
+                    logger.info("Resetting optimizer after pruning.")
+                    optimizer_grouped_parameters = [
+                        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+                        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+                        ]
+                    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                    if args.scheduler == "constant":
+                        scheduler = WarmupConstantSchedule(
+                                optimizer, warmup_steps=args.warmup_steps)
+                    elif args.scheduler == "linear":
+                        scheduler = WarmupLinearSchedule(
+                                optimizer, warmup_steps=args.warmup_steps, t_total=t_total-global_step)
+                    else:
+                        raise ValueError("Unknown scheduler type: {}".format(args.scheduler))
+                    model, optimizer = prepare_model_optimizer(args, model, optimizer)
+
+                    pruned_flops, pruned_num_params = count_flops(model)
+                    logger.info(
+                        "Pruning: original num of params: %.2f, after pruning %.2f (%.1f percents)",
+                        original_num_params,
+                        pruned_num_params,
+                        pruned_num_params / original_num_params * 100,
+                    )
+                    logger.info(
+                        "Pruning: original FLOPS: %.2f, after pruning %.2f (%.1f percents)",
+                        original_flops,
+                        pruned_flops,
+                        pruned_flops / original_flops * 100,
+                    )
+
+                    saved_info['params'] = pruned_num_params
+                    saved_info['flops'] = pruned_flops
+                    saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
+                    saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
     return global_step, global_loss / global_step
 
 
@@ -583,7 +632,15 @@ def main():
                         help="Model directory for evaluation.")
     parser.add_argument("--no_cuda", action='store_true', help="Avoid using CUDA.")
     parser.add_argument('--seed', type=int, default=88, help="random seed for initialization.")
+    pruning_options(parser)
+
     args = parser.parse_args()
+    global saved_info
+    saved_info = {'config': vars(args).copy()}
+
+    args.l1_loss_self_coef = args.l1_loss_self_coef or args.l1_loss_coef
+    args.l1_loss_inter_coef = args.l1_loss_inter_coef or args.l1_loss_coef
+    args.pruning_steps = list(map(float, args.pruning_steps.split(','))) if args.pruning_steps else []
 
     global logger
     mkdir(args.output_dir)
@@ -607,6 +664,8 @@ def main():
         config.hidden_dropout_prob = args.drop_out
         config.loss_type = args.loss_type
         config.img_layer_norm_eps = args.img_layer_norm_eps
+        config.self_slimming = args.self_slimming
+        config.inter_slimming = args.inter_slimming
         config.use_img_layernorm = args.use_img_layernorm
         model = model_class.from_pretrained(args.model_name_or_path, 
             from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
@@ -626,8 +685,10 @@ def main():
             val_dataset = RetrievalDataset(tokenizer, args, 'minival', is_train=False)
         else:
             val_dataset = None
+        tic = time.time()
         global_step, avg_loss = train(args, train_dataset, val_dataset, model, tokenizer)
         logger.info("Training done: total_step = %s, avg loss = %s", global_step, avg_loss)
+        saved_info['train_time'] = round((time.time() - tic) / 3600.0, 2)
 
     # inference and evaluation
     if args.do_test or args.do_eval:
@@ -657,6 +718,10 @@ def main():
             with open(result_file, 'w') as f:
                 json.dump(eval_result, f)
             logger.info("Evaluation results saved to {}.".format(result_file))
+            
+            saved_info['eval_result'] = eval_result
+
+    json.dump(saved_info, open(os.path.join(args.output_dir, 'saved_info.json'), 'w'))
 
 
 if __name__ == "__main__":
