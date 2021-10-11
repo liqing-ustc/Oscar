@@ -75,7 +75,7 @@ python oscar/run_retrieval.py \
     --num_captions_per_img_val 5 \
     --eval_img_keys_file test_img_keys.tsv \
     --cross_image_eval \
-    --per_gpu_eval_batch_size 64 \
+    --per_gpu_eval_batch_size 256 \
     --img_feat_file datasets/coco_ir/features.tsv \
     --eval_model_dir experiments/retrieval/Oscar_B/checkpoint-29-132780 # could be base/large models.
     # --eval_model_dir datasets/coco_ir/model/base/checkpoint-0132780 # could be base/large models.
