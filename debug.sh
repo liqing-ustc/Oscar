@@ -72,7 +72,7 @@ python oscar/run_retrieval.py \
     --cross_image_eval \
     --per_gpu_eval_batch_size 512 \
     --img_feat_file datasets/coco_ir/features.tsv \
-    --eval_model_dir output/checkpoint-29-132780 # could be base/large models.
+    --eval_model_dir output/checkpoint-0-5000 # could be base/large models.
 
 # python oscar/run_retrieval.py \
 #     --do_test \
