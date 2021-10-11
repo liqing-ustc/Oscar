@@ -476,7 +476,6 @@ def get_predict_file(args):
 
 
 def restore_training_settings(args):
-    assert not args.do_train and (args.do_test or args.do_eval)
     train_args = torch.load(op.join(args.eval_model_dir, 'training_args.bin'))
     override_params = ['do_lower_case', 'img_feature_type', 'max_seq_length', 
             'max_img_seq_length', 'add_od_labels', 'od_label_type',
