@@ -6,6 +6,7 @@ import os
 import base64
 import os.path as op
 import random, json, time
+from re import A
 import numpy as np
 import torch
 import torch.nn as nn
@@ -632,6 +633,7 @@ def main():
                         help="Model directory for evaluation.")
     parser.add_argument("--no_cuda", action='store_true', help="Avoid using CUDA.")
     parser.add_argument('--seed', type=int, default=88, help="random seed for initialization.")
+    parser.add_argument("--debug", action='store_true', help="the debug mode.")
     pruning_options(parser)
 
     args = parser.parse_args()

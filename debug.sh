@@ -56,7 +56,7 @@ python oscar/run_retrieval_pruning.py \
     --do_lower_case \
     --per_gpu_train_batch_size 16 \
     --learning_rate 0.00002 \
-    --num_train_epochs 1 \
+    --num_train_epochs 30 \
     --weight_decay 0.05 \
     --save_steps 5000 \
     --add_od_labels \
@@ -72,7 +72,12 @@ python oscar/run_retrieval_pruning.py \
     --cross_image_eval \
     --per_gpu_eval_batch_size 512 \
     --img_feat_file datasets/coco_ir/features.tsv \
-    --eval_model_dir output/checkpoint-0-5000 # could be base/large models.
+    --eval_model_dir output/checkpoint-0-5000 \
+    --self_slimming \
+    --inter_slimming \
+    --pruning_ratio=0.2 \
+    --l1_loss_coef=1e-4 \
+    --pruning_steps=100,200,300 \
 
 # python oscar/run_retrieval.py \
 #     --do_test \
