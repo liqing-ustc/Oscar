@@ -678,6 +678,8 @@ def main():
         tokenizer = tokenizer_class.from_pretrained(checkpoint)
         logger.info("Evaluate the following checkpoint: %s", checkpoint)
         model = model_class.from_pretrained(checkpoint, config=config)
+        
+    args.config = config
 
     model.to(args.device)
     logger.info("Training/evaluation parameters %s", args)
