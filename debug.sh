@@ -54,7 +54,7 @@ python oscar/run_retrieval_pruning.py \
     --model_name_or_path datasets/coco_ir/model/base/checkpoint-1340000 \
     --do_train \
     --do_lower_case \
-    --per_gpu_train_batch_size 16 \
+    --per_gpu_train_batch_size 8 \
     --learning_rate 0.00002 \
     --num_train_epochs 30 \
     --weight_decay 0.05 \
