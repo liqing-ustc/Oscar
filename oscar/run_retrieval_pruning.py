@@ -650,7 +650,7 @@ def main():
 
     if args.debug:
         args.per_gpu_train_batch_size = 8
-        args.per_gpu_train_eval_size = 256
+        args.per_gpu_eval_batch_size = 256
 
     global logger
     mkdir(args.output_dir)
