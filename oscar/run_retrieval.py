@@ -413,7 +413,6 @@ def train(args, train_dataset, val_dataset, model, tokenizer):
                         log_json.append(epoch_log)
                         with open(args.output_dir + '/eval_logs.json', 'w') as fp:
                             json.dump(log_json, fp) 
-            return 0, 0
     return global_step, global_loss / global_step
 
 
