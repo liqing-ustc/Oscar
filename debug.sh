@@ -72,12 +72,12 @@ python oscar/run_retrieval_pruning.py \
     --cross_image_eval \
     --per_gpu_eval_batch_size 512 \
     --img_feat_file datasets/coco_ir/features.tsv \
-    --eval_model_dir output/checkpoint-0-5000 \
     --self_slimming \
     --inter_slimming \
     --pruning_ratio=0.2 \
     --l1_loss_coef=1e-4 \
-    --pruning_steps=100,200,300 \
+    --pruning_steps=100 \
+    --debug \
 
 # python oscar/run_retrieval.py \
 #     --do_test \

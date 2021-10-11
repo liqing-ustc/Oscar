@@ -463,6 +463,10 @@ def train(args, train_dataset, val_dataset, model, tokenizer):
                     saved_info['flops'] = pruned_flops
                     saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
                     saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
+
+            if args.debug and global_step == 200:
+                return global_step, global_loss / global_step
+
     return global_step, global_loss / global_step
 
 
@@ -678,7 +682,7 @@ def main():
         tokenizer = tokenizer_class.from_pretrained(checkpoint)
         logger.info("Evaluate the following checkpoint: %s", checkpoint)
         model = model_class.from_pretrained(checkpoint, config=config)
-        
+
     args.config = config
 
     model.to(args.device)
@@ -696,15 +700,19 @@ def main():
 
     # inference and evaluation
     if args.do_test or args.do_eval:
-        args = restore_training_settings(args)
         test_dataset = RetrievalDataset(tokenizer, args, args.test_split, is_train=False)
-        checkpoint = args.eval_model_dir
-        assert op.isdir(checkpoint)
-        logger.info("Evaluate the following checkpoint: %s", checkpoint)
-        model = model_class.from_pretrained(checkpoint, config=config)
-        model.to(args.device)
-        if args.n_gpu > 1:
-            model = torch.nn.DataParallel(model)
+        if not args.do_train:
+            args = restore_training_settings(args)
+            checkpoint = args.eval_model_dir
+            assert op.isdir(checkpoint)
+            logger.info("Evaluate the following checkpoint: %s", checkpoint)
+            model = model_class.from_pretrained(checkpoint, config=config)
+            model.to(args.device)
+            if args.n_gpu > 1:
+                model = torch.nn.DataParallel(model)
+        else:
+            args.eval_model_dir = args.output_dir
+            logger.info("Evaluate the final checkpoint.")
 
         pred_file = get_predict_file(args)
         if op.isfile(pred_file):
