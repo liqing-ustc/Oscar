@@ -109,7 +109,7 @@ def prepare_model_optimizer(args, model, optimizer):
         model = torch.nn.DataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
-    if args.distributed:
+    if getattr(args, 'distributed', False):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
     
     return model, optimizer
