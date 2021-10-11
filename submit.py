@@ -71,23 +71,35 @@ elif task == 'vqa':
     "
 
 elif task == 'coco_ir':
+    # job_cmd = "python oscar/run_retrieval.py \
+    # --model_name_or_path datasets/coco_ir/model/base/checkpoint-1340000 \
+    # --do_train \
+    # --do_lower_case \
+    # --evaluate_during_training \
+    # --num_captions_per_img_val 20 \
+    # --eval_caption_index_file minival_caption_indexs_top20.pt \
+    # --per_gpu_train_batch_size 16 \
+    # --learning_rate 0.00002 \
+    # --num_train_epochs 30 \
+    # --weight_decay 0.05 \
+    # --save_steps 5000 \
+    # --add_od_labels \
+    # --od_label_type vg \
+    # --max_seq_length 70 \
+    # --max_img_seq_length 70 \
+    # --output_dir output/"
+
+    # evaluate
     job_cmd = "python oscar/run_retrieval.py \
-    --model_name_or_path datasets/coco_ir/model/base/checkpoint-1340000 \
-    --do_train \
-    --do_lower_case \
-    --evaluate_during_training \
-    --num_captions_per_img_val 20 \
-    --eval_caption_index_file minival_caption_indexs_top20.pt \
-    --per_gpu_train_batch_size 16 \
-    --learning_rate 0.00002 \
-    --num_train_epochs 30 \
-    --weight_decay 0.05 \
-    --save_steps 5000 \
-    --add_od_labels \
-    --od_label_type vg \
-    --max_seq_length 70 \
-    --max_img_seq_length 70 \
-    --output_dir output/"
+            --do_test \
+            --do_eval \
+            --test_split test \
+            --num_captions_per_img_val 5 \
+            --eval_img_keys_file test_img_keys.tsv \
+            --cross_image_eval \
+            --per_gpu_eval_batch_size 1024 \
+            --img_feat_file datasets/coco_ir/features.tsv \
+            --eval_model_dir experiments/retrieval/Oscar_B/checkpoint-29-132780"
 
 elif task == 'pretrain':
     num_nodes = 2
