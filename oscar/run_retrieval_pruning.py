@@ -648,6 +648,10 @@ def main():
     args.l1_loss_inter_coef = args.l1_loss_inter_coef or args.l1_loss_coef
     args.pruning_steps = list(map(float, args.pruning_steps.split(','))) if args.pruning_steps else []
 
+    if args.debug:
+        args.per_gpu_train_batch_size = 8
+        args.per_gpu_train_eval_size = 256
+
     global logger
     mkdir(args.output_dir)
     logger = setup_logger("vlpretrain", args.output_dir, 0)
