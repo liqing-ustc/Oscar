@@ -898,6 +898,7 @@ def main():
     config.num_choice = args.num_choice
     config.self_slimming = args.self_slimming
     config.inter_slimming = args.inter_slimming
+    args.config = config
 
     model = model_class.from_pretrained(args.model_name_or_path, from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
 
