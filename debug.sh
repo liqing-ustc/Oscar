@@ -103,4 +103,9 @@ python oscar/run_nlvr_pruning.py \
     --eval_data_type all --loss_type xe --save_epoch -1 --seed 88 --evaluate_during_training \
     --logging_steps -1 --drop_out 0.3 --do_train --weight_decay 0.05 --warmup_steps 10000 \
     --classifier mlp --cls_hidden_scale 3 --num_choice 2 --use_pair \
+    --self_slimming \
+    --inter_slimming \
+    --pruning_ratio=0.2 \
+    --l1_loss_coef=1e-4 \
+    --pruning_steps=100 \
     --debug \
