@@ -93,8 +93,9 @@
 
 
 # NLVR2
-python oscar/run_nlvr.py -j 4 --img_feature_dim 2054 --max_img_seq_length
-    40 --data_dir datasets/nlvr2 --model_type bert --model_name_or_path models/pretrained_base/checkpoint-2000000 \
+python oscar/run_nlvr.py \
+    -j 4 --img_feature_dim 2054 --max_img_seq_length 40 --data_dir datasets/nlvr2 \
+    --model_type bert --model_name_or_path models/pretrained_base/checkpoint-2000000 \
     --task_name nlvr --do_lower_case --max_seq_length 55 \
     --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 72 \
     --learning_rate 3e-05 --num_train_epochs 20 \
