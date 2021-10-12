@@ -93,7 +93,7 @@
 
 
 # NLVR2
-python oscar/run_nlvr.py \
+python oscar/run_nlvr_pruning.py \
     -j 4 --img_feature_dim 2054 --max_img_seq_length 40 --data_dir datasets/nlvr2 \
     --model_type bert --model_name_or_path models/pretrained_base/checkpoint-2000000 \
     --task_name nlvr --do_lower_case --max_seq_length 55 \
