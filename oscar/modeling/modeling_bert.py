@@ -417,6 +417,9 @@ class ImageBertForMultipleChoice(BertPreTrainedModel):
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None,
                 position_ids=None, head_mask=None, img_feats=None):
         num_choices = input_ids.shape[1]
+        print(input_ids.shape)
+        print(input_ids)
+        input()
 
         flat_input_ids = input_ids.view(-1, input_ids.size(-1))
         flat_position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
