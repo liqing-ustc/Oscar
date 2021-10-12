@@ -435,6 +435,8 @@ class ImageBertForMultipleChoice(BertPreTrainedModel):
 
         pooled_output = self.dropout(pooled_output)
 
+        print(pooled_output.shape)
+
         # reshaped_pool_output
         reshaped_pool_output = pooled_output.view(-1, self.config.num_choice*(pooled_output.shape[1]))
         logits = self.classifier(reshaped_pool_output)
