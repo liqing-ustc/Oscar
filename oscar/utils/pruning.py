@@ -70,10 +70,13 @@ def calculate_l1_loss(model, tp):
             loss += m.slimming_coef.abs().sum()
     return loss
 
-def count_flops(model):
+def count_flops(model, use_pair=False):
     if hasattr(model, 'module'): model = model.module
     batch_size, n_img_tokens, n_txt_tokens = 1, 50, 35
-    input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
+    if use_pair:
+        input_ids = torch.ones(batch_size, 2, n_txt_tokens // 2, dtype=torch.int64)
+    else:
+        input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
     img_feats = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
     attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, dtype=torch.int64)
     masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)

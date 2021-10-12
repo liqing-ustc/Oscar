@@ -509,7 +509,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                     logger.info("Prune the model after training {} steps".format(global_step))
                     if global_step == args.pruning_steps[0]:
                         # the first time to prune, count the original flops and params
-                        original_flops, original_num_params = count_flops(model)
+                        original_flops, original_num_params = count_flops(model, use_pair=args.use_pair)
                     if global_step == args.pruning_steps[-1]:
                         # the last time to prune, set the l1 loss coef to 0
                         args.l1_loss_self_coef, args.l1_loss_inter_coef = 0, 0
@@ -530,7 +530,7 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                     scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total-global_step)
                     model, optimizer = prepare_model_optimizer(args, model, optimizer)
 
-                    pruned_flops, pruned_num_params = count_flops(model)
+                    pruned_flops, pruned_num_params = count_flops(model, use_pair=args.use_pair)
                     logger.info(
                         "Pruning: original num of params: %.2f, after pruning %.2f (%.1f percents)",
                         original_num_params,
