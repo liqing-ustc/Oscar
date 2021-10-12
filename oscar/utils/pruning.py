@@ -76,10 +76,11 @@ def count_flops(model, use_pair=False):
     if use_pair:
         input_ids = torch.ones(batch_size, 2, n_txt_tokens // 2, dtype=torch.int64)
         img_feats = torch.ones(batch_size, 2, n_img_tokens // 2, 2054, dtype=torch.float32)
+        attention_mask = None
     else:
         input_ids = torch.ones(batch_size, n_txt_tokens, dtype=torch.int64)
         img_feats = torch.ones(batch_size, n_img_tokens, 2054, dtype=torch.float32)
-    attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, dtype=torch.int64)
+        attention_mask = torch.ones(batch_size, n_img_tokens+n_txt_tokens, dtype=torch.int64)
     masked_pos = torch.ones(batch_size, n_txt_tokens, dtype=torch.int32)
     is_training = False
     inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'img_feats': img_feats}
