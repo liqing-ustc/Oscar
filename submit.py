@@ -99,7 +99,7 @@ elif task == 'coco_ir':
             --cross_image_eval \
             --per_gpu_eval_batch_size 1024 \
             --img_feat_file datasets/coco_ir/features.tsv \
-            --eval_model_dir experiments/retrieval/Oscar_B/checkpoint-29-132780"
+            --eval_model_dir experiments/coco_ir/pruning_small_0.2_1000/0/checkpoint-29-132780"
 
 elif task == 'pretrain':
     num_nodes = 2

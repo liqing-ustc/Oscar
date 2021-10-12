@@ -37,9 +37,8 @@ job_cmd = "python oscar/run_retrieval_pruning.py \
     --num_captions_per_img_val 5 \
     --eval_img_keys_file test_img_keys.tsv \
     --cross_image_eval \
-    --per_gpu_eval_batch_size 512 \
+    --per_gpu_eval_batch_size 256 \
     --img_feat_file datasets/coco_ir/features.tsv \
-    --pruning_steps=100 \
     --self_slimming --inter_slimming --l1_loss_coef 1e-4 \
     --pruning_strategy {} --pruning_ratio {} --pruning_steps {} --seed {}\
 "
