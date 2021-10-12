@@ -430,11 +430,13 @@ def train(args, train_dataset, val_dataset, model, tokenizer):
                     model = prune(args, model, logger)
                     # reset optimizer
                     logger.info("Resetting optimizer after pruning.")
-                    optimizer_grouped_parameters = [
-                        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-                        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-                        ]
-                    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                    grouped_parameters = [
+                        {'params': [p for n, p in model.named_parameters() if not \
+                            any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
+                        {'params': [p for n, p in model.named_parameters() if \
+                            any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+                    ]
+                    optimizer = AdamW(grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
                     if args.scheduler == "constant":
                         scheduler = WarmupConstantSchedule(
                                 optimizer, warmup_steps=args.warmup_steps)

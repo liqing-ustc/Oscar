@@ -50,6 +50,8 @@ from transformers.pytorch_transformers import (WEIGHTS_NAME, BertConfig, BertTok
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule
 
 from oscar.modeling.modeling_bert import ImageBertForMultipleChoice, ImageBertForSequenceClassification
+from oscar.utils.pruning import prune, count_flops, calculate_l1_loss, pruning_options
+from oscar.utils.misc import mkdir, get_rank, prepare_model_optimizer
 
 from torch.optim import Adamax
 from oscar.utils.task_utils import (_truncate_seq_pair, output_modes, processors)
@@ -503,6 +505,50 @@ def train(args, train_dataset, eval_dataset, model, tokenizer):
                         logger.info("EVALERR: {}%".format(100 * best_score))
                     logging_loss = tr_loss
 
+                if global_step in args.pruning_steps:
+                    logger.info("Prune the model after training {} steps".format(global_step))
+                    if global_step == args.pruning_steps[0]:
+                        # the first time to prune, count the original flops and params
+                        original_flops, original_num_params = count_flops(model)
+                    if global_step == args.pruning_steps[-1]:
+                        # the last time to prune, set the l1 loss coef to 0
+                        args.l1_loss_self_coef, args.l1_loss_inter_coef = 0, 0
+                        l1_self_loss, l1_inter_loss = 0, 0
+                        logger.info("The last time to prune and set l1 loss coef to 0.")
+
+                    model = prune(args, model, logger)
+                    # reset optimizer
+                    logger.info("Resetting optimizer after pruning.")
+                    optimizer_grouped_parameters = [
+                        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
+                        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+                        ]
+                    if args.optim == 'AdamW':
+                        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                    elif args.optim == 'Adamax':
+                        optimizer = Adamax(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total-global_step)
+                    model, optimizer = prepare_model_optimizer(args, model, optimizer)
+
+                    pruned_flops, pruned_num_params = count_flops(model)
+                    logger.info(
+                        "Pruning: original num of params: %.2f, after pruning %.2f (%.1f percents)",
+                        original_num_params,
+                        pruned_num_params,
+                        pruned_num_params / original_num_params * 100,
+                    )
+                    logger.info(
+                        "Pruning: original FLOPS: %.2f, after pruning %.2f (%.1f percents)",
+                        original_flops,
+                        pruned_flops,
+                        pruned_flops / original_flops * 100,
+                    )
+
+                    saved_info['params'] = pruned_num_params
+                    saved_info['flops'] = pruned_flops
+                    saved_info['params_ratio'] = round(pruned_num_params / original_num_params * 100, 2)
+                    saved_info['flops_ratio'] = round(pruned_flops / original_flops * 100, 2)
+
             #if args.max_steps > 0 and global_step > args.max_steps:
             #    epoch_iterator.close()
             #    break
@@ -773,10 +819,15 @@ def main():
     parser.add_argument('-j', '--workers', default=0, type=int, metavar='N', help='number of data loading workers (default: 4)')
 
     parser.add_argument("--debug", action='store_true', help="the debug mode.")
+    pruning_options(parser)
 
     args = parser.parse_args()
     global saved_info
     saved_info = {'config': vars(args).copy()}
+
+    args.l1_loss_self_coef = args.l1_loss_self_coef or args.l1_loss_coef
+    args.l1_loss_inter_coef = args.l1_loss_inter_coef or args.l1_loss_coef
+    args.pruning_steps = list(map(float, args.pruning_steps.split(','))) if args.pruning_steps else []
 
     if args.philly:  # use philly
         logger.info('Info: Use Philly, all the output folders are reset.')
@@ -845,6 +896,8 @@ def main():
     config.classifier = args.classifier
     config.cls_hidden_scale = args.cls_hidden_scale
     config.num_choice = args.num_choice
+    config.self_slimming = args.self_slimming
+    config.inter_slimming = args.inter_slimming
 
     model = model_class.from_pretrained(args.model_name_or_path, from_tf=bool('.ckpt' in args.model_name_or_path), config=config)
 

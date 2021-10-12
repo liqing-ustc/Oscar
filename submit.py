@@ -12,7 +12,7 @@ stamp = ''
 if not stamp:
     stamp = datetime.now().strftime('%Y%m%d.%H%M%S')
 
-task = 'coco_ir'
+task = 'nlvr2'
 num_nodes = 1
 output_dir = 't-lqing/output/{}/oscar.{}'.format(task, stamp)
 submit_cmd = "python -m aml_tools.aml_submit --input_dir . --output_dir {} --num_nodes {} --exp_name liqing-{} " \
@@ -100,6 +100,19 @@ elif task == 'coco_ir':
             --per_gpu_eval_batch_size 1024 \
             --img_feat_file datasets/coco_ir/features.tsv \
             --eval_model_dir experiments/coco_ir/pruning_small_0.2_1000/0/checkpoint-29-132780"
+
+elif task == 'nlvr2':
+    job_cmd = 'python oscar/run_nlvr_pruning.py \
+        -j 4 --img_feature_dim 2054 --max_img_seq_length 40 --data_dir datasets/nlvr2 \
+        --model_type bert --model_name_or_path models/pretrained_base/checkpoint-2000000 \
+        --task_name nlvr --do_lower_case --max_seq_length 55 \
+        --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 32 \
+        --learning_rate 3e-05 --num_train_epochs 20 \
+        --output_dir output --img_feature_type faster_r-cnn --data_label_type all --train_data_type all \
+        --eval_data_type all --loss_type xe --save_epoch -1 --seed 88 --evaluate_during_training \
+        --logging_steps -1 --drop_out 0.3 --do_train --weight_decay 0.05 --warmup_steps 10000 \
+        --classifier mlp --cls_hidden_scale 3 --num_choice 2 --use_pair \
+        '
 
 elif task == 'pretrain':
     num_nodes = 2
