@@ -99,14 +99,14 @@ elif task == 'coco_ir':
             --cross_image_eval \
             --per_gpu_eval_batch_size 1024 \
             --img_feat_file datasets/coco_ir/features.tsv \
-            --eval_model_dir experiments/coco_ir/pruning_small_0.2_1000/0/checkpoint-29-132780"
+            --eval_model_dir experiments/coco_ir/pruning_small_0.6_1000/0/checkpoint-29-132780"
 
 elif task == 'nlvr2':
     job_cmd = 'python oscar/run_nlvr_pruning.py \
         -j 4 --img_feature_dim 2054 --max_img_seq_length 40 --data_dir datasets/nlvr2 \
         --model_type bert --model_name_or_path models/pretrained_base/checkpoint-2000000 \
         --task_name nlvr --do_lower_case --max_seq_length 55 \
-        --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 32 \
+        --per_gpu_eval_batch_size 64 --per_gpu_train_batch_size 24 \
         --learning_rate 3e-05 --num_train_epochs 20 \
         --output_dir output --img_feature_type faster_r-cnn --data_label_type all --train_data_type all \
         --eval_data_type all --loss_type xe --save_epoch -1 --seed 88 --evaluate_during_training \
